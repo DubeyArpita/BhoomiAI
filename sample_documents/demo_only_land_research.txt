@@ -1,0 +1,10 @@
+FICTIONAL DEMONSTRATION DOCUMENT — NOT A GOVERNMENT PUBLICATION
+Title: Example research note on district land-use information
+
+This fictional example shows how BhoomiAI retrieves and cites indexed documents. It is not based on an actual district survey and must not be used as evidence in policy analysis.
+
+An example project could combine publicly released district land-use maps, satellite-derived estimates and official reports on land-record modernization. Researchers must record geographic boundaries, imagery dates, coordinate reference systems and dataset provenance.
+
+A hypothetical dashboard could show the percentage of agricultural land, built-up area and land exposed to a modelled flood hazard. These descriptive indicators do not prove that a government policy caused the observed differences.
+
+Any policy simulator must disclose assumptions, coverage and uncertainty. Do not upload personally identifiable landowner data or restricted government records into this prototype.

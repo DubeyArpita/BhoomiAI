@@ -1,0 +1,18 @@
+services:
+  db:
+    image: pgvector/pgvector:pg16
+    environment:
+      POSTGRES_USER: bhoomi
+      POSTGRES_PASSWORD: bhoomi_dev_only
+      POSTGRES_DB: bhoomiai
+    ports:
+      - "127.0.0.1:5433:5432"
+    volumes:
+      - bhoomi_pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U bhoomi -d bhoomiai"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+volumes:
+  bhoomi_pgdata:
