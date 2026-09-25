@@ -13,7 +13,7 @@ import fitz
 import httpx
 import psycopg
 from dotenv import load_dotenv
-from fastapi import BackgroundTasks, FastAPI, File, HTTPException, Query, UploadFile
+from fastapi import BackgroundTasks, FastAPI, File, Form, HTTPException, Query, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, Field
 from sentence_transformers import SentenceTransformer
@@ -60,6 +60,8 @@ def init_database():
             embedding VECTOR(384) NOT NULL
         )""")
         db.execute("CREATE INDEX IF NOT EXISTS idx_chunks_document ON chunks(document_id)")
+        for column in ("title", "state", "district", "source_url"):
+            db.execute(f"ALTER TABLE documents ADD COLUMN IF NOT EXISTS {column} TEXT")
         db.execute("""CREATE TABLE IF NOT EXISTS upload_jobs (
             id UUID PRIMARY KEY, filename TEXT NOT NULL,
             status TEXT NOT NULL, stage TEXT NOT NULL, progress INTEGER NOT NULL,
@@ -163,7 +165,7 @@ def update_job(job_id, status, stage, progress, document_id=None, error=None):
                    (status, stage, progress, document_id, error, job_id))
 
 
-def index_in_background(job_id, filename, data, digest):
+def index_in_background(job_id, filename, data, digest, metadata):
     """Development-only background task; job status is persisted in PostgreSQL."""
     try:
         update_job(job_id, "processing", "Extracting text", 20)
@@ -189,6 +191,7 @@ def index_in_background(job_id, filename, data, digest):
             doc_id = db.execute(
                 "INSERT INTO documents (filename,sha256,chunk_count) VALUES (%s,%s,%s) RETURNING id",
                 (filename, digest, len(pieces))).fetchone()[0]
+            db.execute("UPDATE documents SET title=%s,state=%s,district=%s,source_url=%s WHERE id=%s", (*metadata, doc_id))
             with db.cursor() as cur:
                 cur.executemany(
                     "INSERT INTO chunks (document_id,page_number,content,embedding) "
@@ -202,7 +205,13 @@ def index_in_background(job_id, filename, data, digest):
 
 
 @app.post("/documents/jobs", status_code=202)
-async def create_upload_job(background_tasks: BackgroundTasks, file: UploadFile = File(...)):
+async def create_upload_job(
+    background_tasks: BackgroundTasks, file: UploadFile = File(...),
+    title: str = Form(default="", max_length=300),
+    state: str = Form(default="", max_length=120),
+    district: str = Form(default="", max_length=120),
+    source_url: str = Form(default="", max_length=1000),
+):
     filename = Path(file.filename or "unnamed").name
     if Path(filename).suffix.lower() not in {".pdf", ".txt", ".md"}:
         raise HTTPException(400, "Unsupported file type")
@@ -210,6 +219,9 @@ async def create_upload_job(background_tasks: BackgroundTasks, file: UploadFile 
     if len(data) > MAX_UPLOAD_BYTES:
         raise HTTPException(413, "Maximum file size is 15 MB")
     digest = hashlib.sha256(data).hexdigest()
+    if source_url and not source_url.startswith(("https://", "http://")):
+        raise HTTPException(422, "Source URL must begin with http:// or https://")
+    metadata = (title.strip() or filename, state.strip(), district.strip(), source_url.strip())
     with conn() as db:
         existing = db.execute("SELECT id FROM documents WHERE sha256=%s", (digest,)).fetchone()
         if existing:
@@ -224,7 +236,7 @@ async def create_upload_job(background_tasks: BackgroundTasks, file: UploadFile 
             "INSERT INTO upload_jobs (id, filename, status, stage, progress) "
             "VALUES (%s,%s,'queued','Queued for indexing',10)",
             (job_id, filename))
-    background_tasks.add_task(index_in_background, job_id, filename, data, digest)
+    background_tasks.add_task(index_in_background, job_id, filename, data, digest, metadata)
     return {"job_id": str(job_id), "status": "queued",
             "stage": "Queued for indexing", "progress": 10}
 
