@@ -264,30 +264,34 @@ def list_documents():
              "uploaded_at": row[3].isoformat()} for row in rows]
 
 
-def retrieve(question, limit=5):
+def retrieve(question, limit=6, state='', district=''):
     emb = vector_literal(model().encode(question, normalize_embeddings=True))
     with conn() as db:
         rows = db.execute("""SELECT c.id,d.filename,c.page_number,c.content,
                              1-(c.embedding <=> %s::vector) AS similarity
                              FROM chunks c JOIN documents d ON d.id=c.document_id
+                             WHERE (%s = '' OR d.state ILIKE %s)
+                               AND (%s = '' OR d.district ILIKE %s)
                              ORDER BY c.embedding <=> %s::vector LIMIT %s""",
-                          (emb, emb, limit)).fetchall()
+                          (emb, state, state, district, district, emb, limit)).fetchall()
     return [{"chunk_id": r[0], "filename": r[1], "page": r[2],
              "excerpt": r[3], "similarity": round(float(r[4]), 4)} for r in rows]
 
 
 @app.get("/search")
-def search(q: str = Query(min_length=2), limit: int = Query(default=5, ge=1, le=20)):
-    return {"query": q, "results": retrieve(q, limit)}
+def search(q: str = Query(min_length=2), limit: int = Query(default=6, ge=1, le=20), state: str = "", district: str = ""):
+    return {"query": q, "results": retrieve(q, limit, state, district)}
 
 
 class ChatRequest(BaseModel):
     question: str = Field(min_length=2, max_length=2000)
+    state: str = ''
+    district: str = ''
 
 
 @app.post("/chat")
 async def chat(request: ChatRequest):
-    sources = retrieve(request.question, limit=5)
+    sources = retrieve(request.question, limit=6, state=request.state, district=request.district)
     if not sources:
         return {"answer": "No documents indexed yet. Upload a research paper or report first.",
                 "sources": []}
