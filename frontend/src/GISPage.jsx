@@ -2,6 +2,7 @@ import React,{useEffect,useState} from 'react';
 import {MapContainer,TileLayer,GeoJSON,ScaleControl,LayersControl} from 'react-leaflet';
 import L from 'leaflet';
 import 'leaflet/dist/leaflet.css';
+import {apiFetch} from './api.js';
 const API='/api';
 const INITIAL_CENTER=[28.669,77.453];
 const MAX_VISIBLE_FEATURES=1000;
@@ -23,7 +24,7 @@ export default function GISPage(){
  const [name,setName]=useState(''),[source,setSource]=useState(''),[licence,setLicence]=useState(''),[description,setDescription]=useState('');
  const [file,setFile]=useState(null),[loading,setLoading]=useState(false),[message,setMessage]=useState('');
  async function list(){
-  const r=await fetch(API+'/gis/layers');if(!r.ok)throw Error('GIS backend unavailable');
+  const r=await apiFetch(API+'/gis/layers');if(!r.ok)throw Error('GIS backend unavailable');
   setLayers(await r.json());
  }
  useEffect(()=>{list().catch(e=>setMessage(e.message))},[]);
@@ -32,7 +33,7 @@ export default function GISPage(){
   if(!loaded.some(item=>item.id===layer.id)){
    try{
     setMessage('Loading '+layer.name+'...');
-    const r=await fetch(API+'/gis/layers/'+layer.id+'/features?limit='+MAX_VISIBLE_FEATURES);
+    const r=await apiFetch(API+'/gis/layers/'+layer.id+'/features?limit='+MAX_VISIBLE_FEATURES);
     if(!r.ok)throw Error('Could not fetch map features');
     const data=await r.json();
     setLoaded(p=>[...p,{id:layer.id,data}]);
@@ -49,7 +50,7 @@ export default function GISPage(){
   body.append('file',file);body.append('name',name);body.append('source_url',source);
   body.append('licence',licence);body.append('description',description);
   try{
-   const r=await fetch(API+'/gis/layers',{method:'POST',body});
+   const r=await apiFetch(API+'/gis/layers',{method:'POST',body});
    const result=await r.json();
    if(!r.ok)throw Error(result.detail||'Import failed');
    setMessage('Imported '+result.features+' features into '+result.name);
@@ -61,7 +62,7 @@ export default function GISPage(){
  async function remove(layer){
   if(!window.confirm('Delete GIS layer '+layer.name+'?'))return;
   try{
-   const r=await fetch(API+'/gis/layers/'+layer.id,{method:'DELETE'});
+   const r=await apiFetch(API+'/gis/layers/'+layer.id,{method:'DELETE'});
    if(!r.ok)throw Error('Could not delete layer');
    setLoaded(p=>p.filter(x=>x.id!==layer.id));setVisible(p=>p.filter(id=>id!==layer.id));await list();
    setMessage('Layer deleted.');

@@ -104,3 +104,108 @@ Import `sample_data/SYNTHETIC_demo.geojson` under the layer name **Synthetic dem
 
 ### Next GIS steps
 Import genuinely public and appropriately licensed geographic datasets. Our synthetic sample is only a UI test: **it is not an actual Ghaziabad boundary or land-use survey**. To import shapefiles or GeoTIFF/COG later, preprocess locally with free QGIS or GDAL, record CRS, source URL, date and licence, and introduce a raster processing/tiling pipeline. This stage does not yet derive real land-use trends or integrate live government systems. Development-only instance: no authentication or public deployment yet.
+
+## Integrated Stage 3–6 prototype (development version)
+
+This repository now includes **source-based monitoring indicators, a transparent
+land-conversion scenario calculator, research workspaces, shared evidence review,
+an innovation challenge portal, a region/document evidence graph, related-document
+discovery, Markdown research exports, local GeoTIFF ingestion and exploratory
+NDVI comparisons**. These are functional prototype components, not a validated
+nationwide production platform or an autonomous policy-recommendation system.
+
+### One-time local setup (Windows PowerShell)
+
+Install dependencies using the existing Python 3.12 virtual environment and
+Node.js. Install Docker Desktop. Generate random secrets:
+
+```powershell
+python -c "import secrets; print(secrets.token_urlsafe(48)); print(secrets.token_urlsafe(48))"
+```
+
+Place the first generated string into `SESSION_SECRET` and the second into
+`BOOTSTRAP_KEY` in `backend/.env`. **Do not commit your .env file.**
+Add `GEO_DATABASE_URL` from `backend/.env.example` to an existing .env
+if it is absent. The development credentials in docker-compose.yml are **not**
+appropriate for exposed or production deployment.
+
+Then run:
+
+```powershell
+# From repository root
+docker compose up -d
+docker compose ps
+cd backend
+.\.venv\Scripts\Activate.ps1
+python -m pip install -r requirements.txt
+uvicorn app.main:app --reload
+```
+
+In another PowerShell terminal:
+
+```powershell
+cd frontend
+npm install
+npm run dev
+```
+
+Visit http://127.0.0.1:5173 . Click "First-time setup" once and supply your
+bootstrap key to create the administrator. Sign in. The server requires a
+session for all document, chat, GIS, satellite, and collaboration endpoints.
+The token is stored in browser sessionStorage and expires after 8 hours.
+**This login flow is development-grade:** add HTTPS, rate limiting, automated
+backup, password resets, stronger audit coverage, automated access-control
+tests, and professionally managed secrets before any real deployment. Use
+public, non-sensitive land datasets only.
+
+### Platform tabs
+
+- **AI Research**: existing RAG pipeline with provenance, basic regional filters.
+- **GIS Explorer**: import GeoJSON in EPSG:4326; list/inspect overlays.
+- **Research & Policy Hub > Overview**: local document coverage and sourced
+  indicator charts. Enter real data rather than fabricated metrics.
+- **Research Workspaces**: create projects, add evidence notes, have another
+  researcher confirm/reject notes, share projects, export Markdown reports.
+- **Policy Lab**: enter source-attributed state/district/year indicators and
+  compare *user-specified* conversion assumptions using an explicit formula.
+- **Innovation Portal**: admin posts challenges, researchers submit proposals.
+- **Satellite Lab**: import a local, appropriately licensed GeoTIFF up to 40 MB;
+  preview bands; compare registered overlapping rasters with a simple NDVI
+  delta. Choose red/NIR bands correctly; no automated cloud, snow, seasonal,
+  atmospheric, multi-sensor or legal land-cover classification yet.
+- **Evidence Graph**: explicit region/document/project relationships, limited
+  visual graph, corpus-coverage table, embedding-based related publications.
+
+### Free and lawful data
+
+Use freely accessible **official-source** government publications and licensed
+geospatial data. An accessible web map is not necessarily an open dataset.
+Record dataset name, original publication URL, acquisition year, district,
+coordinate reference system and reuse terms. Satellite uploads use original
+files on the local disk, not an internet API. Basemap is optional and requires
+internet, but local map features and the research assistant do not require
+a cloud subscription.
+
+The existing `sample_data/SYNTHETIC_demo.geojson` and fictional example TXT
+are labelled as demonstrations, **never official survey records**.
+
+### Evaluation before the SIH presentation
+
+1. `python -m compileall -q backend/app` and `cd frontend; npm run build`.
+2. Run the included unit tests. Docker, Python, Node, PostgreSQL, Ollama,
+   and both database containers must be healthy.
+3. Upload real licensed documents and GeoJSON; verify progress, deletion,
+   metadata filters and citations without manually refreshing.
+4. Create two accounts, share a project, create/confirm/reject notes and export.
+5. Insert a sourced historical indicator; inspect dashboard/chart and explain
+   what the indicator does **not** imply causally.
+6. Try the scenario input; independently verify every calculated quantity.
+7. Upload two truly compatible, cloud-free overlapping reflectance images;
+   compare their NDVI and report all limitations.
+8. Verify role-based permissions and audit records. Do not expose the server
+   publicly until the security review is complete.
+
+**Known gaps:** No production government API connectors, nationwide coverage,
+automated access to cadastral/landowner records, validated causal policy
+simulation, robust optical/SAR fusion, automatic legal land-use classification,
+exhaustive document citation verification or enterprise security certification.
