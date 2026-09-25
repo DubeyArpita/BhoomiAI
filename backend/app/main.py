@@ -22,6 +22,7 @@ from .platform import router as platform_router, init_platform_database, authent
 from .raster import router as raster_router, init_raster_database
 from .gis import router as gis_router, init_geo_database
 from .advanced import router as advanced_router
+from .advanced import router as advanced_router
 
 load_dotenv()
 DB_URL = os.getenv("DATABASE_URL", "postgresql://bhoomi:bhoomi_dev_only@localhost:5433/bhoomiai")
@@ -88,6 +89,7 @@ app = FastAPI(title="BhoomiAI Stage 1", version="0.1.0", lifespan=lifespan)
 app.include_router(gis_router)
 app.include_router(platform_router)
 app.include_router(raster_router)
+app.include_router(advanced_router)
 app.include_router(advanced_router)
 
 @app.middleware("http")
