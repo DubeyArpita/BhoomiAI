@@ -17,6 +17,7 @@ from fastapi import BackgroundTasks, FastAPI, File, Form, HTTPException, Query, 
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, Field
 from sentence_transformers import SentenceTransformer
+from .gis import router as gis_router, init_geo_database
 
 load_dotenv()
 DB_URL = os.getenv("DATABASE_URL", "postgresql://bhoomi:bhoomi_dev_only@localhost:5433/bhoomiai")
@@ -73,10 +74,12 @@ def init_database():
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     init_database()
+    init_geo_database()
     yield
 
 
 app = FastAPI(title="BhoomiAI Stage 1", version="0.1.0", lifespan=lifespan)
+app.include_router(gis_router)
 app.add_middleware(CORSMiddleware, allow_origins=[FRONTEND_ORIGIN],
                    allow_credentials=False, allow_methods=["*"], allow_headers=["*"])
 

@@ -14,5 +14,21 @@ services:
       interval: 5s
       timeout: 3s
       retries: 10
+  geo_db:
+    image: postgis/postgis:16-3.4
+    environment:
+      POSTGRES_USER: bhoomi_geo
+      POSTGRES_PASSWORD: bhoomi_geo_dev_only
+      POSTGRES_DB: bhoomi_geo
+    ports:
+      - "127.0.0.1:5434:5432"
+    volumes:
+      - bhoomi_geodata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U bhoomi_geo -d bhoomi_geo"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
 volumes:
   bhoomi_pgdata:
+  bhoomi_geodata:

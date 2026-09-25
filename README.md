@@ -76,3 +76,31 @@ The updated upload form accepts optional document title, state, district and off
 Test after pulling the update: upload a new report, observe indexing stages, confirm it appears without refreshing, filter by metadata, then ask a substantive question. Cite claims using the linked sources and manually verify their page references. For regional questions, using the corresponding state/district filter restricts retrieval to explicitly tagged documents.
 
 Stage 1.1 limits: Metadata is manually entered, not automatically inferred. Existing indexed documents retain empty metadata until reimported; the delete action removes a document and its vector index. The development app has no user authentication yet; use only public non-sensitive files and do not expose it to the internet.
+
+## Stage 2 — Local GIS Explorer (prototype)
+
+Stage 2 adds a **separate, local PostGIS 16** development container at localhost:5434, a GeoJSON ingestion API, layer listing/deletion, and an interactive React Leaflet map. The original pgvector database remains at localhost:5433 with its existing volume intact.
+
+After pulling the update, run from the repository root:
+
+```powershell
+docker compose up -d
+docker compose ps
+cd frontend
+npm install
+npm run dev
+```
+
+In a separate terminal, activate backend/.venv and run `uvicorn app.main:app --reload`. **Stage 2 requires the geo_db container to be healthy before the backend starts.** Open `http://127.0.0.1:8000/gis/health` and `http://127.0.0.1:5173`, then select GIS Explorer.
+
+Import `sample_data/SYNTHETIC_demo.geojson` under the layer name **Synthetic demo (not real land use)**. Check the corresponding layer checkbox and inspect the map. To display the optional OpenStreetMap basemap, enable its checkbox while online. Avoid bulk automated tile downloads; respect OSM tile usage policy. The blank local background plus GeoJSON overlays works without basemap requests.
+
+### GIS API
+- GET /gis/health: verify PostGIS connectivity.
+- POST /gis/layers: GeoJSON file (EPSG:4326), name, optional source_url, licence, description; 10 MB and 5,000-feature import cap.
+- GET /gis/layers: layer metadata and counts.
+- GET /gis/layers/{id}/features?limit=1000: GeoJSON overlay with a per-request limit.
+- DELETE /gis/layers/{id}: remove a layer and its features.
+
+### Next GIS steps
+Import genuinely public and appropriately licensed geographic datasets. Our synthetic sample is only a UI test: **it is not an actual Ghaziabad boundary or land-use survey**. To import shapefiles or GeoTIFF/COG later, preprocess locally with free QGIS or GDAL, record CRS, source URL, date and licence, and introduce a raster processing/tiling pipeline. This stage does not yet derive real land-use trends or integrate live government systems. Development-only instance: no authentication or public deployment yet.

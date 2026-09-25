@@ -1,0 +1,97 @@
+{
+  "type": "FeatureCollection",
+  "name": "SYNTHETIC GIS DEMO - NOT REAL LAND USE",
+  "features": [
+    {
+      "type": "Feature",
+      "properties": {
+        "demo_only": true,
+        "label": "Illustrative polygon A",
+        "category": "Hypothetical built-up",
+        "year": 2025,
+        "source": "Synthetic geometry for UI testing only"
+      },
+      "geometry": {
+        "type": "Polygon",
+        "coordinates": [
+          [
+            [
+              77.43,
+              28.66
+            ],
+            [
+              77.445,
+              28.66
+            ],
+            [
+              77.445,
+              28.673
+            ],
+            [
+              77.43,
+              28.673
+            ],
+            [
+              77.43,
+              28.66
+            ]
+          ]
+        ]
+      }
+    },
+    {
+      "type": "Feature",
+      "properties": {
+        "demo_only": true,
+        "label": "Illustrative polygon B",
+        "category": "Hypothetical agricultural",
+        "year": 2025,
+        "source": "Synthetic geometry for UI testing only"
+      },
+      "geometry": {
+        "type": "Polygon",
+        "coordinates": [
+          [
+            [
+              77.45,
+              28.65
+            ],
+            [
+              77.469,
+              28.65
+            ],
+            [
+              77.469,
+              28.665
+            ],
+            [
+              77.45,
+              28.665
+            ],
+            [
+              77.45,
+              28.65
+            ]
+          ]
+        ]
+      }
+    },
+    {
+      "type": "Feature",
+      "properties": {
+        "demo_only": true,
+        "label": "Illustrative point",
+        "category": "Research site placeholder",
+        "year": 2025,
+        "source": "Synthetic coordinate for UI testing only"
+      },
+      "geometry": {
+        "type": "Point",
+        "coordinates": [
+          77.451,
+          28.673
+        ]
+      }
+    }
+  ]
+}
