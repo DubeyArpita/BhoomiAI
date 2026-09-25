@@ -4,6 +4,8 @@ from __future__ import annotations
 import hashlib
 import os
 import re
+import uuid
+import logging
 from contextlib import asynccontextmanager
 from pathlib import Path
 
@@ -11,7 +13,7 @@ import fitz
 import httpx
 import psycopg
 from dotenv import load_dotenv
-from fastapi import FastAPI, File, HTTPException, Query, UploadFile
+from fastapi import BackgroundTasks, FastAPI, File, HTTPException, Query, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, Field
 from sentence_transformers import SentenceTransformer
@@ -24,6 +26,7 @@ OLLAMA_MODEL = os.getenv("OLLAMA_MODEL", "gemma3:4b")
 FRONTEND_ORIGIN = os.getenv("FRONTEND_ORIGIN", "http://localhost:5173")
 MAX_UPLOAD_BYTES = 15 * 1024 * 1024
 _model = None
+logger = logging.getLogger(__name__)
 
 
 def conn():
@@ -57,6 +60,12 @@ def init_database():
             embedding VECTOR(384) NOT NULL
         )""")
         db.execute("CREATE INDEX IF NOT EXISTS idx_chunks_document ON chunks(document_id)")
+        db.execute("""CREATE TABLE IF NOT EXISTS upload_jobs (
+            id UUID PRIMARY KEY, filename TEXT NOT NULL,
+            status TEXT NOT NULL, stage TEXT NOT NULL, progress INTEGER NOT NULL,
+            document_id BIGINT REFERENCES documents(id), error TEXT,
+            created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+        )""")
 
 
 @asynccontextmanager
