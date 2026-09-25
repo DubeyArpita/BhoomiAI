@@ -156,6 +156,92 @@ async def upload_document(file: UploadFile = File(...)):
     return {"id": doc_id, "filename": filename, "chunks": len(pieces)}
 
 
+def update_job(job_id, status, stage, progress, document_id=None, error=None):
+    with conn() as db:
+        db.execute("""UPDATE upload_jobs SET status=%s, stage=%s, progress=%s,
+                      document_id=%s, error=%s WHERE id=%s""",
+                   (status, stage, progress, document_id, error, job_id))
+
+
+def index_in_background(job_id, filename, data, digest):
+    """Development-only background task; job status is persisted in PostgreSQL."""
+    try:
+        update_job(job_id, "processing", "Extracting text", 20)
+        pieces = [(page, chunk) for page, content in extract_pages(filename, data)
+                  for chunk in split_text(content)]
+        if not pieces:
+            raise ValueError("No extractable text. Scanned PDFs are not supported yet.")
+        update_job(job_id, "processing", "Loading embedding model", 35)
+        embedder = model()
+        update_job(job_id, "processing", "Generating embeddings", 50)
+        batch_size = 16
+        embeddings = []
+        for start in range(0, len(pieces), batch_size):
+            batch = pieces[start:start + batch_size]
+            vectors = embedder.encode([text for _, text in batch],
+                                      normalize_embeddings=True,
+                                      show_progress_bar=False)
+            embeddings.extend(vector_literal(v) for v in vectors)
+            percentage = 50 + int(35 * min(start + len(batch), len(pieces)) / len(pieces))
+            update_job(job_id, "processing", "Generating embeddings", percentage)
+        update_job(job_id, "processing", "Saving document and search index", 90)
+        with conn() as db:
+            doc_id = db.execute(
+                "INSERT INTO documents (filename,sha256,chunk_count) VALUES (%s,%s,%s) RETURNING id",
+                (filename, digest, len(pieces))).fetchone()[0]
+            with db.cursor() as cur:
+                cur.executemany(
+                    "INSERT INTO chunks (document_id,page_number,content,embedding) "
+                    "VALUES (%s,%s,%s,%s::vector)",
+                    [(doc_id, page, text, vec)
+                     for (page, text), vec in zip(pieces, embeddings)])
+        update_job(job_id, "completed", "Ready to search", 100, document_id=doc_id)
+    except Exception as exc:
+        logger.exception("Document indexing failed for job %s", job_id)
+        update_job(job_id, "failed", "Indexing failed", 0, error=str(exc)[:500])
+
+
+@app.post("/documents/jobs", status_code=202)
+async def create_upload_job(background_tasks: BackgroundTasks, file: UploadFile = File(...)):
+    filename = Path(file.filename or "unnamed").name
+    if Path(filename).suffix.lower() not in {".pdf", ".txt", ".md"}:
+        raise HTTPException(400, "Unsupported file type")
+    data = await file.read(MAX_UPLOAD_BYTES + 1)
+    if len(data) > MAX_UPLOAD_BYTES:
+        raise HTTPException(413, "Maximum file size is 15 MB")
+    digest = hashlib.sha256(data).hexdigest()
+    with conn() as db:
+        existing = db.execute("SELECT id FROM documents WHERE sha256=%s", (digest,)).fetchone()
+        if existing:
+            raise HTTPException(409, f"Already indexed (document {existing[0]})")
+        active = db.execute(
+            "SELECT id FROM upload_jobs WHERE filename=%s AND status IN ('queued','processing')",
+            (filename,)).fetchone()
+        if active:
+            raise HTTPException(409, f"File is already processing (job {active[0]})")
+        job_id = uuid.uuid4()
+        db.execute(
+            "INSERT INTO upload_jobs (id, filename, status, stage, progress) "
+            "VALUES (%s,%s,'queued','Queued for indexing',10)",
+            (job_id, filename))
+    background_tasks.add_task(index_in_background, job_id, filename, data, digest)
+    return {"job_id": str(job_id), "status": "queued",
+            "stage": "Queued for indexing", "progress": 10}
+
+
+@app.get("/documents/jobs/{job_id}")
+def get_upload_job(job_id: uuid.UUID):
+    with conn() as db:
+        row = db.execute(
+            "SELECT filename,status,stage,progress,document_id,error "
+            "FROM upload_jobs WHERE id=%s", (job_id,)).fetchone()
+    if not row:
+        raise HTTPException(404, "Upload job not found")
+    return {"job_id": str(job_id), "filename": row[0], "status": row[1],
+            "stage": row[2], "progress": row[3],
+            "document_id": row[4], "error": row[5]}
+
+
 @app.get("/documents")
 def list_documents():
     with conn() as db:
