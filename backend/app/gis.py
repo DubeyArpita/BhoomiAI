@@ -204,3 +204,38 @@ def delete_layer(layer_id: uuid.UUID):
     if not row:
         raise HTTPException(404, "Layer not found.")
     return {"deleted": str(layer_id), "name": row[0]}
+
+
+@router.get("/layers/{layer_id}/landuse-stats")
+def landuse_stats(layer_id: uuid.UUID):
+    """Area summaries derived from user-imported vector geometry and tags.
+
+    Requires a 'land_use' property. Year defaults to unlabelled. The output
+    is descriptive only; overlapping polygons, inaccurate boundaries, or
+    differing source methods can invalidate cross-year comparisons.
+    """
+    with geo_connection() as db:
+        existing=db.execute(
+            "SELECT name,source_url,licence FROM geo_layers WHERE id=%s",
+            (layer_id,)).fetchone()
+        if not existing:
+            raise HTTPException(404,"Layer not found.")
+        rows=db.execute(
+            """SELECT COALESCE(NULLIF(properties->>'land_use',''),'Unclassified'),
+                      COALESCE(NULLIF(properties->>'year',''),'Unspecified'),
+                      COUNT(*),
+                      ROUND((SUM(CASE
+                          WHEN ST_Dimension(geometry)=2
+                          THEN ST_Area(ST_Transform(geometry,6933))
+                          ELSE 0 END)/10000.0)::numeric,3)
+               FROM geo_features WHERE layer_id=%s
+               GROUP BY 1,2 ORDER BY 2,1 LIMIT 200""",
+            (layer_id,)).fetchall()
+    return {"layer_id":str(layer_id),"name":existing[0],
+            "source_url":existing[1],"licence":existing[2],
+            "categories":[{"land_use":r[0],"year":r[1],
+                           "features":r[2],"area_ha":float(r[3])} for r in rows],
+            "warning":"Descriptive area from uploaded polygons (EPSG:6933). "
+                      "A tagged class is not independently verified. "
+                      "Overlapping polygons, missing years and differing survey "
+                      "methods can distort land-use trends."}
