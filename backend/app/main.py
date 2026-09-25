@@ -156,7 +156,7 @@ def extract_pages(filename, content):
                     lines = [f"Workbook: {Path(filename).name}; worksheet: {sheet.title}"]
                     count = 0
                     for row in sheet.iter_rows(values_only=True):
-                        cells = [str(value).replace("\\n", " ").strip() if value is not None else ""
+                        cells = [str(value).replace("\n", " ").strip() if value is not None else ""
                                  for value in row[:60]]
                         if any(cells):
                             lines.append(" | ".join(cells).rstrip(" |"))
@@ -165,7 +165,7 @@ def extract_pages(filename, content):
                         # government reports without the user knowing.
                         if count > 10000 or sum(map(len, lines)) > 2_000_000:
                             raise HTTPException(413, "Workbook is too large to index safely.")
-                    pages.append((None, "\\n".join(lines)))
+                    pages.append((None, "\n".join(lines)))
                 return pages
             finally:
                 book.close()
