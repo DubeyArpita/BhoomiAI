@@ -292,14 +292,17 @@ def retrieve(question, limit=6, state='', district=''):
     emb = vector_literal(model().encode(question, normalize_embeddings=True))
     with conn() as db:
         rows = db.execute("""SELECT c.id,d.filename,c.page_number,c.content,
-                             1-(c.embedding <=> %s::vector) AS similarity
+                             1-(c.embedding <=> %s::vector) AS similarity,
+                             d.title,d.state,d.district,d.source_url
                              FROM chunks c JOIN documents d ON d.id=c.document_id
                              WHERE (%s = '' OR d.state ILIKE %s)
                                AND (%s = '' OR d.district ILIKE %s)
                              ORDER BY c.embedding <=> %s::vector LIMIT %s""",
                           (emb, state, state, district, district, emb, limit)).fetchall()
     return [{"chunk_id": r[0], "filename": r[1], "page": r[2],
-             "excerpt": r[3], "similarity": round(float(r[4]), 4)} for r in rows]
+             "excerpt": r[3], "similarity": round(float(r[4]), 4),
+             "title": r[5] or r[1], "state": r[6], "district": r[7],
+             "source_url": r[8]} for r in rows]
 
 
 @app.get("/search")
