@@ -234,3 +234,46 @@ They do not automatically establish scientific research gaps, authenticate linke
 sources, validate policy effectiveness or derive real land-use statistics. Check
 original publications and reuse rights independently. Run `python -m pytest -q backend/tests`
 in an environment with the backend dependencies installed.
+
+
+## Integrating the pushed real Ghaziabad data (development workflow)
+
+The `datasets/` directory added in the September 2026 upload contains a real
+Survey of India district boundary, a locally clipped ESA WorldCover 2021
+GeoTIFF, four Ghaziabad DILRMP XLSX reports, state-level DILRMP reports and
+several government PDF publications. **Committing files does not put them into
+the running PostgreSQL, PostGIS or local RAG index.** Use the importer below to
+register the files on your own computer.
+
+1. Pull the current main branch **after this feature has been merged**. In
+   PowerShell at the repository root, start the two local database containers:
+   `docker compose up -d`.
+2. Install the new spreadsheet dependency:
+   `cd backend; .\\.venv\\Scripts\\Activate.ps1; python -m pip install -r requirements.txt`.
+   Run `uvicorn app.main:app --reload` and ensure your administrator account
+   is already configured. Keep this terminal running.
+3. In a second terminal opened at the repository root, preview the files:
+   `python backend/scripts/import_ghaziabad.py --dry-run`.
+   Then run `python backend/scripts/import_ghaziabad.py`. Enter the **local
+   BhoomiAI administrator email and password** at the prompts; credentials
+   are not stored in the repository.
+4. The importer registers the Ghaziabad Survey of India GeoJSON and clipped
+   ESA WorldCover 2021 raster, then indexes four Ghaziabad XLSX workbooks for
+   grounded local search. It skips already-imported dataset names/filenames.
+   National PDFs and state-wide reports can be uploaded individually using
+   the AI Research UI, with their actual geography and source metadata.
+5. Open the GIS Explorer tab, select the imported Ghaziabad boundary under
+   **Land-cover statistics by district**, then click **Calculate Ghaziabad land
+   cover** beside the ESA WorldCover scene. The backend classifies the
+   district-clipped raster by the original ESA categorical codes and estimates
+   each class area in hectares using a projected equal-area grid.
+
+This analysis measures **land cover**, not cadastral land use, property
+ownership or historical change. A single 2021 classification cannot establish
+a trend; Sentinel-2 access and registration can be completed later.
+Government PDF and XLSX text is indexed as a retrieved source, not silently
+converted into verified numeric indicators. Avoid importing screenshots or
+scanned PDFs as text without an explicit OCR and verification workflow.
+The 2021 annual WorldCover composite is stored with 2021-12-31 in the existing
+required `capture_date` column **as a year-end placeholder, not as a scene
+acquisition date**. Check original government and ESA terms before reuse.

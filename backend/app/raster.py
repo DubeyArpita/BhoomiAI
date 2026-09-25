@@ -218,3 +218,100 @@ def delete_scene(scene_id:uuid.UUID):
         raise HTTPException(404,"Scene not found.")
     (STORE/row[0]).unlink(missing_ok=True)
     return {"deleted":str(scene_id)}
+
+
+# ESA WorldCover 2021 v200 class codes. Never interpret a classification
+# map's integer values as reflectance bands or calculate NDVI on them.
+WORLDCOVER_CLASSES = {
+    10: "Tree cover", 20: "Shrubland", 30: "Grassland",
+    40: "Cropland", 50: "Built-up", 60: "Bare / sparse vegetation",
+    70: "Snow and ice", 80: "Permanent water bodies",
+    90: "Herbaceous wetland", 95: "Mangroves",
+    100: "Moss and lichen",
+}
+
+
+def summarize_landcover(path, boundary_geometry):
+    """Equal-area, approximate counts of categorical classes inside a polygon.
+
+    The boundary is WGS84 GeoJSON; raster pixels are nearest-neighbour
+    reprojected to EPSG:6933. Boundary-edge pixel areas are approximate.
+    """
+    from rasterio.features import geometry_mask, geometry_window
+    from rasterio.windows import Window
+    from rasterio.errors import WindowError
+    from rasterio.warp import transform_geom
+    import json
+
+    with rasterio.open(path) as source:
+        if source.crs is None or source.count < 1:
+            raise HTTPException(422, "Land-cover GeoTIFF needs a CRS and one class band.")
+        with WarpedVRT(source, crs="EPSG:6933",
+                       resampling=Resampling.nearest) as ds:
+            geom = transform_geom("EPSG:4326", ds.crs, boundary_geometry)
+            try:
+                window = geometry_window(ds, [geom])
+                window = window.intersection(Window(0, 0, ds.width, ds.height))
+            except (WindowError, ValueError) as exc:
+                raise HTTPException(422, "The selected boundary does not overlap the raster.") from exc
+            width, height = int(window.width), int(window.height)
+            if width * height > MAX_PIXELS:
+                raise HTTPException(413, "Clipped analysis exceeds 25 million pixels.")
+            pixels = ds.read(1, window=window)
+            valid = ds.read_masks(1, window=window) > 0
+            inside = geometry_mask(
+                [geom], out_shape=(height, width),
+                transform=ds.window_transform(window), invert=True,
+            )
+            included = valid & inside & (pixels != 0)
+            counts = {int(value): int(count) for value, count in
+                      zip(*np.unique(pixels[included], return_counts=True))}
+            pixel_ha = abs(ds.transform.a * ds.transform.e -
+                           ds.transform.b * ds.transform.d) / 10_000.0
+            total = sum(counts.values())
+            categories = [
+                {
+                    "code": code,
+                    "name": WORLDCOVER_CLASSES.get(code, f"Unknown code {code}"),
+                    "pixels": count,
+                    "area_ha": round(count * pixel_ha, 2),
+                    "percentage": round(count / total * 100, 2) if total else 0,
+                }
+                for code, count in sorted(counts.items())
+            ]
+            return {"analysed_pixels": total,
+                    "analysed_area_ha": round(total * pixel_ha, 2),
+                    "categories": categories}
+
+
+@router.get("/scenes/{scene_id}/landcover-stats")
+def landcover_statistics(scene_id: uuid.UUID, boundary_layer_id: uuid.UUID):
+    """ESA WorldCover categorical breakdown clipped to an imported district boundary."""
+    with geo_connection() as db:
+        scene = db.execute(
+            "SELECT title,platform,source_url FROM raster_scenes WHERE id=%s",
+            (scene_id,),
+        ).fetchone()
+        boundary = db.execute(
+            "SELECT l.name, ST_AsGeoJSON(ST_Union(f.geometry)) "
+            "FROM geo_layers l JOIN geo_features f ON f.layer_id=l.id "
+            "WHERE l.id=%s GROUP BY l.id", (boundary_layer_id,),
+        ).fetchone()
+    if not scene:
+        raise HTTPException(404, "Raster scene not found.")
+    if not boundary:
+        raise HTTPException(404, "Boundary layer not found or empty.")
+    if "worldcover" not in (scene[0] + " " + scene[1]).lower():
+        raise HTTPException(422, "This operation expects an ESA WorldCover class raster, not an NDVI image.")
+    import json
+    result = summarize_landcover(find_scene(scene_id), json.loads(boundary[1]))
+    return {
+        "scene_id": str(scene_id), "boundary_layer_id": str(boundary_layer_id),
+        "scene_title": scene[0], "boundary_name": boundary[0],
+        "source_url": scene[2], "product": "ESA WorldCover categorical map",
+        **result,
+        "limitations": "Approximate equal-area raster pixel counts at the selected "
+                       "boundary. Nearest-neighbour resampling and boundary-edge pixels "
+                       "introduce small errors. ESA WorldCover is model-derived land COVER, "
+                       "not cadastral land USE, a legal property record, or proof of policy impact.",
+    }

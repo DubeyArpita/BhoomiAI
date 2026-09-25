@@ -21,11 +21,12 @@ function MapLayers({data,visible}){
 }
 export default function GISPage(){
  const [layers,setLayers]=useState([]),[loaded,setLoaded]=useState([]),[visible,setVisible]=useState([]),[showTiles,setShowTiles]=useState(false);
- const [stats,setStats]=useState(null),[rasterScenes,setRasterScenes]=useState([]),[rasterSelected,setRasterSelected]=useState(null),[rasterUrl,setRasterUrl]=useState(''),[name,setName]=useState(''),[source,setSource]=useState(''),[licence,setLicence]=useState(''),[description,setDescription]=useState('');
+ const [stats,setStats]=useState(null),[coverStats,setCoverStats]=useState(null),[coverBusy,setCoverBusy]=useState(false),[boundaryId,setBoundaryId]=useState(''),[rasterScenes,setRasterScenes]=useState([]),[rasterSelected,setRasterSelected]=useState(null),[rasterUrl,setRasterUrl]=useState(''),[name,setName]=useState(''),[source,setSource]=useState(''),[licence,setLicence]=useState(''),[description,setDescription]=useState('');
  const [file,setFile]=useState(null),[loading,setLoading]=useState(false),[message,setMessage]=useState('');
  async function list(){
   const r=await apiFetch(API+'/gis/layers');if(!r.ok)throw Error('GIS backend unavailable');
-  setLayers(await r.json());
+  const rows=await r.json();setLayers(rows);
+  setBoundaryId(old=>old||rows.find(layer=>/ghaziabad.*boundary/i.test(layer.name))?.id||'');
  }
  useEffect(()=>{list().catch(e=>setMessage(e.message));apiFetch(API+'/raster/scenes').then(r=>r.json()).then(setRasterScenes).catch(e=>setMessage(e.message))},[]);
  async function toggle(layer){
@@ -62,6 +63,16 @@ export default function GISPage(){
  async function loadStatistics(layer){
   try{const r=await apiFetch(API+'/gis/layers/'+layer.id+'/landuse-stats');if(!r.ok)throw Error('Statistics unavailable');setStats(await r.json())}
   catch(e){setMessage(e.message)}
+ }
+ async function loadCoverStats(scene){
+  if(!boundaryId){setMessage('Select the Ghaziabad boundary layer first.');return}
+  setCoverBusy(true);setMessage('Calculating ESA WorldCover area by class...');
+  try{
+   const url=API+'/raster/scenes/'+scene.id+'/landcover-stats?boundary_layer_id='+encodeURIComponent(boundaryId);
+   const r=await apiFetch(url), data=await r.json();
+   if(!r.ok)throw Error(typeof data.detail==='string'?data.detail:'Could not calculate land-cover statistics');
+   setCoverStats(data);setMessage('');
+  }catch(e){setMessage(e.message)}finally{setCoverBusy(false)}
  }
  async function overlayRaster(scene){
   try{
@@ -105,8 +116,23 @@ export default function GISPage(){
      <button type="button" onClick={()=>loadStatistics(layer)}>Land-use area summary</button><button type="button" className="gis-delete" onClick={()=>remove(layer)}>Delete layer</button>
     </div>)}
    {stats&&<div className="gis-stats"><h4>{stats.name}: geometric area</h4>{stats.categories.map((c,i)=><p key={i}>{c.year} · {c.land_use}: {c.area_ha.toLocaleString()} ha ({c.features} features)</p>)}<small>{stats.warning}</small></div>}
+    <h3>Land-cover statistics by district</h3>
+    <label>Boundary
+     <select value={boundaryId} onChange={e=>{setBoundaryId(e.target.value);setCoverStats(null)}}>
+      <option value="">Choose a district boundary</option>
+      {layers.map(layer=><option key={layer.id} value={layer.id}>{layer.name}</option>)}
+     </select>
+    </label>
+    <p className="small-muted">Choose the imported Ghaziabad polygon, then analyse the ESA WorldCover 2021 class raster below. These are approximate land-cover areas, not cadastral records.</p>
+    {coverStats&&<div className="gis-stats">
+      <h4>{coverStats.boundary_name} · {coverStats.scene_title}</h4>
+      <p>Analysed area: {coverStats.analysed_area_ha.toLocaleString()} ha</p>
+      <table><thead><tr><th>Class</th><th>Area (ha)</th><th>Share</th></tr></thead>
+       <tbody>{coverStats.categories.map(row=><tr key={row.code}><td>{row.name}</td><td>{row.area_ha.toLocaleString()}</td><td>{row.percentage}%</td></tr>)}</tbody></table>
+      <small>{coverStats.limitations}</small>
+    </div>}
     <h3>Locally imported satellite scenes</h3>
-    {rasterScenes.map(scene=><div className="gis-layer" key={scene.id}><strong>{scene.title}</strong><small>{scene.capture_date} · {scene.platform}</small><button type="button" onClick={()=>overlayRaster(scene)}>{rasterSelected?.id===scene.id?'Hide image':'Show georeferenced preview'}</button></div>)}
+    {rasterScenes.map(scene=><div className="gis-layer" key={scene.id}><strong>{scene.title}</strong><small>{scene.capture_date} · {scene.platform}</small><button type="button" onClick={()=>overlayRaster(scene)}>{rasterSelected?.id===scene.id?'Hide image':'Show georeferenced preview'}</button>{/worldcover/i.test(scene.title+' '+scene.platform)&&<button type="button" disabled={coverBusy||!boundaryId} onClick={()=>loadCoverStats(scene)}>{coverBusy?'Calculating...':'Calculate Ghaziabad land cover'}</button>}</div>)}
     {!rasterScenes.length&&<p className="small-muted">Import a licensed GeoTIFF in the Satellite Lab to display it on this map.</p>}
    </aside>
    <div className="gis-map-area">

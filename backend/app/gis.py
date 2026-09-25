@@ -73,10 +73,14 @@ def init_geo_database():
 def validate_geojson(data):
     if not isinstance(data, dict) or data.get("type") != "FeatureCollection":
         raise HTTPException(422, "Upload a GeoJSON FeatureCollection.")
-    # RFC 7946 coordinates are WGS84 longitude,latitude; explicit alternate
-    # CRS definitions are not converted silently.
-    if data.get("crs"):
-        raise HTTPException(422, "Re-export the GeoJSON in EPSG:4326 without a crs member.")
+    # GeoJSON RFC 7946 uses WGS84 lon/lat. QGIS sometimes exports the
+    # equivalent legacy OGC CRS84 tag (as in the official Ghaziabad file).
+    # Accept ONLY this explicit CRS tag; other CRSs need reprojection in QGIS.
+    crs = data.get("crs")
+    if crs is not None:
+        name = crs.get("properties", {}).get("name", "") if isinstance(crs, dict) else ""
+        if name not in ("urn:ogc:def:crs:OGC:1.3:CRS84", "OGC:CRS84", "CRS84"):
+            raise HTTPException(422, "Re-export the GeoJSON in EPSG:4326 (WGS84 lon/lat).")
     features = data.get("features")
     if not isinstance(features, list) or not features:
         raise HTTPException(422, "FeatureCollection must contain at least one feature.")
@@ -91,7 +95,17 @@ def validate_geojson(data):
             raise HTTPException(422, f"Feature {index} has an unsupported geometry.")
         if not isinstance(feature.get("properties", {}), dict):
             raise HTTPException(422, f"Feature {index} properties must be an object.")
-        prepared.append((json.dumps(geom), Jsonb(feature.get("properties", {}))))
+        # QGIS may add elevation (Z) to lon/lat pairs. Store 2D shapes so
+        # subsequent map overlays, areas and intersection queries are uniform.
+        def xy_only(node):
+            if isinstance(node, list):
+                if len(node) >= 2 and all(isinstance(v, (int, float)) and not isinstance(v, bool) for v in node[:2]):
+                    return node[:2]
+                return [xy_only(child) for child in node]
+            return node
+
+        geom_2d = {**geom, "coordinates": xy_only(geom.get("coordinates"))}
+        prepared.append((json.dumps(geom_2d), Jsonb(feature.get("properties", {}))))
     return prepared
 
 

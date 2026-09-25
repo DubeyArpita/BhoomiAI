@@ -17,11 +17,12 @@ from fastapi import BackgroundTasks, FastAPI, File, Form, HTTPException, Query, 
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, Field
 from sentence_transformers import SentenceTransformer
+from openpyxl import load_workbook
+import io
 from fastapi.responses import JSONResponse
 from .platform import router as platform_router, init_platform_database, authenticate_token
 from .raster import router as raster_router, init_raster_database
 from .gis import router as gis_router, init_geo_database
-from .advanced import router as advanced_router
 from .advanced import router as advanced_router
 
 load_dotenv()
@@ -90,7 +91,6 @@ app.include_router(gis_router)
 app.include_router(platform_router)
 app.include_router(raster_router)
 app.include_router(advanced_router)
-app.include_router(advanced_router)
 
 @app.middleware("http")
 async def require_session(request, call_next):
@@ -144,12 +144,41 @@ def extract_pages(filename, content):
                 pdf.close()
         except Exception as exc:
             raise HTTPException(400, f"Could not read PDF: {exc}") from exc
+    if suffix == ".xlsx":
+        # XLSX is a ZIP-based Office format. Convert each worksheet into
+        # labelled plain text for the existing RAG pipeline without pretending
+        # that spreadsheet rows are independently verified statistics.
+        try:
+            book = load_workbook(io.BytesIO(content), read_only=True, data_only=True)
+            try:
+                pages = []
+                for sheet in book:
+                    lines = [f"Workbook: {Path(filename).name}; worksheet: {sheet.title}"]
+                    count = 0
+                    for row in sheet.iter_rows(values_only=True):
+                        cells = [str(value).replace("\n", " ").strip() if value is not None else ""
+                                 for value in row[:60]]
+                        if any(cells):
+                            lines.append(" | ".join(cells).rstrip(" |"))
+                            count += 1
+                        # Refuse excessive sheets instead of indexing truncated
+                        # government reports without the user knowing.
+                        if count > 10000 or sum(map(len, lines)) > 2_000_000:
+                            raise HTTPException(413, "Workbook is too large to index safely.")
+                    pages.append((None, "\n".join(lines)))
+                return pages
+            finally:
+                book.close()
+        except HTTPException:
+            raise
+        except Exception as exc:
+            raise HTTPException(422, f"Could not read XLSX workbook: {exc}") from exc
     if suffix in {".txt", ".md"}:
         try:
             return [(None, content.decode("utf-8-sig"))]
         except UnicodeError as exc:
             raise HTTPException(400, "Text files must be UTF-8") from exc
-    raise HTTPException(400, "Only PDF, TXT and MD files are supported")
+    raise HTTPException(400, "Only PDF, XLSX, TXT and MD files are supported")
 
 
 @app.get("/health")
@@ -165,7 +194,7 @@ def health():
 @app.post("/documents", status_code=201)
 async def upload_document(file: UploadFile = File(...)):
     filename = Path(file.filename or "unnamed").name
-    if Path(filename).suffix.lower() not in {".pdf", ".txt", ".md"}:
+    if Path(filename).suffix.lower() not in {".pdf", ".xlsx", ".txt", ".md"}:
         raise HTTPException(400, "Unsupported file type")
     data = await file.read(MAX_UPLOAD_BYTES + 1)
     if len(data) > MAX_UPLOAD_BYTES:
@@ -247,7 +276,7 @@ async def create_upload_job(
     source_url: str = Form(default="", max_length=1000),
 ):
     filename = Path(file.filename or "unnamed").name
-    if Path(filename).suffix.lower() not in {".pdf", ".txt", ".md"}:
+    if Path(filename).suffix.lower() not in {".pdf", ".xlsx", ".txt", ".md"}:
         raise HTTPException(400, "Unsupported file type")
     data = await file.read(MAX_UPLOAD_BYTES + 1)
     if len(data) > MAX_UPLOAD_BYTES:
