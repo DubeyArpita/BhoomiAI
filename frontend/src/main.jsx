@@ -61,7 +61,7 @@ function App({user}){
  <input aria-label="State" placeholder="State e.g. Uttar Pradesh" value={meta.state} onChange={e=>setMeta({...meta,state:e.target.value})}/>
  <input aria-label="District" placeholder="District e.g. Ghaziabad" value={meta.district} onChange={e=>setMeta({...meta,district:e.target.value})}/>
  <input aria-label="Source URL" placeholder="Source URL (official publication)" value={meta.source_url} onChange={e=>setMeta({...meta,source_url:e.target.value})}/></div>
- <label className="upload">{uploading?'Processing document...':'Upload PDF / TXT / MD'}<input type="file" accept=".pdf,.txt,.md" disabled={uploading} onChange={upload}/></label>
+ <label className="upload">{uploading?'Processing document...':'Upload PDF / XLSX / TXT / MD'}<input type="file" accept=".pdf,.xlsx,.txt,.md" disabled={uploading} onChange={upload}/></label>
  <div className="meta"><input aria-label="Find document" placeholder="Filter by title" value={filter.q} onChange={e=>setFilter({...filter,q:e.target.value})}/>
  <input aria-label="Filter state" placeholder="State filter" value={filter.state} onChange={e=>setFilter({...filter,state:e.target.value})}/>
  <input aria-label="Filter district" placeholder="District filter" value={filter.district} onChange={e=>setFilter({...filter,district:e.target.value})}/>
