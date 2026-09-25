@@ -5,3 +5,5 @@ node_modules/
 dist/
 *.pyc
 .DS_Store
+backend/local_rasters/
+.pytest_cache/
