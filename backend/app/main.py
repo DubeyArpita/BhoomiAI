@@ -255,13 +255,37 @@ def get_upload_job(job_id: uuid.UUID):
 
 
 @app.get("/documents")
-def list_documents():
+def list_documents(q: str = "", state: str = "", district: str = ""):
+    filters, params = [], []
+    if q.strip():
+        filters.append("(title ILIKE %s OR filename ILIKE %s)")
+        params.extend(["%" + q.strip() + "%"] * 2)
+    if state.strip():
+        filters.append("state ILIKE %s")
+        params.append(state.strip())
+    if district.strip():
+        filters.append("district ILIKE %s")
+        params.append(district.strip())
+    where = " WHERE " + " AND ".join(filters) if filters else ""
     with conn() as db:
         rows = db.execute(
-            "SELECT id,filename,chunk_count,uploaded_at FROM documents ORDER BY uploaded_at DESC"
-        ).fetchall()
-    return [{"id": row[0], "filename": row[1], "chunks": row[2],
-             "uploaded_at": row[3].isoformat()} for row in rows]
+            "SELECT id,filename,chunk_count,uploaded_at,title,state,district,source_url "
+            "FROM documents" + where + " ORDER BY uploaded_at DESC", params).fetchall()
+    return [{"id": r[0], "filename": r[1], "chunks": r[2],
+             "uploaded_at": r[3].isoformat(), "title": r[4] or r[1],
+             "state": r[5], "district": r[6], "source_url": r[7]} for r in rows]
+
+
+@app.delete("/documents/{document_id}")
+def delete_document(document_id: int):
+    with conn() as db:
+        db.execute("UPDATE upload_jobs SET document_id=NULL WHERE document_id=%s",
+                   (document_id,))
+        deleted = db.execute("DELETE FROM documents WHERE id=%s RETURNING filename",
+                             (document_id,)).fetchone()
+    if not deleted:
+        raise HTTPException(404, "Document not found")
+    return {"deleted": document_id, "filename": deleted[0]}
 
 
 def retrieve(question, limit=6, state='', district=''):
