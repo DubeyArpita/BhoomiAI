@@ -60,3 +60,19 @@ The example document is fictional. Verify cited material. The app only stores ex
 3. Add a transparent scenario-based land-use analytics module.
 4. Add collaboration and access controls.
 5. Add evidence-linked retrieval and research-gap analysis.
+
+
+## Stage 1.1: Source metadata and research collection
+
+The updated upload form accepts optional document title, state, district and official source URL. The sidebar supports metadata filtering and deleting document indexes. Questions can be filtered by state or district; documents without matching metadata are excluded when filters are applied. The RAG model now requests evidence-based explanatory answers.
+
+**Begin with these public, official source portals** (download and check reuse conditions before uploading):
+- Department of Land Resources: annual reports, including 2024–25 and 2025–26: https://dolr.gov.in/en/annual-reports/
+- Department of Land Resources: DILRMP guidelines and technical manuals: https://dolr.gov.in/en/document-category/program-dilrmp/
+- Ministry of Housing and Urban Affairs: URDPFI urban and regional planning guidelines: https://mohua.gov.in/upload/uploadfiles/files/URDPFI%20Guidelines%20Vol%20I%283%29.pdf
+
+**Suggested first upload:** One DILRMP report. Set title to its actual title, leave state and district blank if national in scope, and paste the official page URL. Add a second document for a state or district only if the document truly concerns that geography. Never label national statistics as district-level data.
+
+Test after pulling the update: upload a new report, observe indexing stages, confirm it appears without refreshing, filter by metadata, then ask a substantive question. Cite claims using the linked sources and manually verify their page references. For regional questions, using the corresponding state/district filter restricts retrieval to explicitly tagged documents.
+
+Stage 1.1 limits: Metadata is manually entered, not automatically inferred. Existing indexed documents retain empty metadata until reimported; the delete action removes a document and its vector index. The development app has no user authentication yet; use only public non-sensitive files and do not expose it to the internet.
