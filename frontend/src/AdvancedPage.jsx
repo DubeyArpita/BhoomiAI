@@ -81,7 +81,7 @@ export default function AdvancedPage({user}){
      <button disabled={working}>{working?'Loading...':'Calculate descriptive changes'}</button>
     </form>
     {trend&&<><table><thead><tr><th>Year</th><th>Value</th><th>Unit</th><th>Dataset</th></tr></thead><tbody>{trend.series.map((r,i)=><tr key={i}><td>{r.year}</td><td>{r.value}</td><td>{r.unit}</td><td><a href={r.source_url} rel="noreferrer" target="_blank">{r.dataset_name}</a></td></tr>)}</tbody></table>
-     <h4>Observed changes</h4>{trend.changes.map((c,i)=><p key={i}>{c.from_year}–{c.to_year}: {c.absolute_change.toLocaleString()} {c.unit} ({c.percentage_change===null?'percentage undefined':c.percentage_change+'%'})</p>}
+     <h4>Observed changes</h4>{trend.changes.map((c,i)=><p key={i}>{c.from_year}–{c.to_year}: {c.absolute_change.toLocaleString()} {c.unit} ({c.percentage_change===null?'percentage undefined':c.percentage_change+'%'})</p>)}
      <p className="hub-caution">{trend.warning}</p></>}
    </section>
    <section className="hub-panel">
