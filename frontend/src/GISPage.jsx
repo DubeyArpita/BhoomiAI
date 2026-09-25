@@ -1,5 +1,5 @@
 import React,{useEffect,useState} from 'react';
-import {MapContainer,TileLayer,GeoJSON,ScaleControl,LayersControl} from 'react-leaflet';
+import {MapContainer,TileLayer,GeoJSON,ScaleControl,ImageOverlay} from 'react-leaflet';
 import L from 'leaflet';
 import 'leaflet/dist/leaflet.css';
 import {apiFetch} from './api.js';
@@ -21,13 +21,13 @@ function MapLayers({data,visible}){
 }
 export default function GISPage(){
  const [layers,setLayers]=useState([]),[loaded,setLoaded]=useState([]),[visible,setVisible]=useState([]),[showTiles,setShowTiles]=useState(false);
- const [name,setName]=useState(''),[source,setSource]=useState(''),[licence,setLicence]=useState(''),[description,setDescription]=useState('');
+ const [stats,setStats]=useState(null),[rasterScenes,setRasterScenes]=useState([]),[rasterSelected,setRasterSelected]=useState(null),[rasterUrl,setRasterUrl]=useState(''),[name,setName]=useState(''),[source,setSource]=useState(''),[licence,setLicence]=useState(''),[description,setDescription]=useState('');
  const [file,setFile]=useState(null),[loading,setLoading]=useState(false),[message,setMessage]=useState('');
  async function list(){
   const r=await apiFetch(API+'/gis/layers');if(!r.ok)throw Error('GIS backend unavailable');
   setLayers(await r.json());
  }
- useEffect(()=>{list().catch(e=>setMessage(e.message))},[]);
+ useEffect(()=>{list().catch(e=>setMessage(e.message));apiFetch(API+'/raster/scenes').then(r=>r.json()).then(setRasterScenes).catch(e=>setMessage(e.message))},[]);
  async function toggle(layer){
   if(visible.includes(layer.id)){setVisible(p=>p.filter(id=>id!==layer.id));return}
   if(!loaded.some(item=>item.id===layer.id)){
@@ -59,6 +59,20 @@ export default function GISPage(){
    await list();
   }catch(e){setMessage(e.message)}finally{setLoading(false)}
  }
+ async function loadStatistics(layer){
+  try{const r=await apiFetch(API+'/gis/layers/'+layer.id+'/landuse-stats');if(!r.ok)throw Error('Statistics unavailable');setStats(await r.json())}
+  catch(e){setMessage(e.message)}
+ }
+ async function overlayRaster(scene){
+  try{
+   if(rasterUrl)URL.revokeObjectURL(rasterUrl);
+   if(rasterSelected?.id===scene.id){setRasterSelected(null);setRasterUrl('');return}
+   setMessage('Preparing geographic raster preview...');
+   const r=await apiFetch(API+'/raster/scenes/'+scene.id+'/preview');
+   if(!r.ok)throw Error('Raster preview unavailable');
+   setRasterSelected(scene);setRasterUrl(URL.createObjectURL(await r.blob()));setMessage('');
+  }catch(e){setMessage(e.message)}
+ }
  async function remove(layer){
   if(!window.confirm('Delete GIS layer '+layer.name+'?'))return;
   try{
@@ -88,14 +102,19 @@ export default function GISPage(){
      <label><input type="checkbox" checked={visible.includes(layer.id)} onChange={()=>toggle(layer)}/><strong>{layer.name}</strong></label>
      <small>{layer.feature_count} features {layer.licence&&'· '+layer.licence}</small>
      {layer.source_url&&<a href={layer.source_url} target="_blank" rel="noreferrer">View dataset source</a>}
-     <button type="button" className="gis-delete" onClick={()=>remove(layer)}>Delete layer</button>
+     <button type="button" onClick={()=>loadStatistics(layer)}>Land-use area summary</button><button type="button" className="gis-delete" onClick={()=>remove(layer)}>Delete layer</button>
     </div>)}
+   {stats&&<div className="gis-stats"><h4>{stats.name}: geometric area</h4>{stats.categories.map((c,i)=><p key={i}>{c.year} · {c.land_use}: {c.area_ha.toLocaleString()} ha ({c.features} features)</p>)}<small>{stats.warning}</small></div>}
+    <h3>Locally imported satellite scenes</h3>
+    {rasterScenes.map(scene=><div className="gis-layer" key={scene.id}><strong>{scene.title}</strong><small>{scene.capture_date} · {scene.platform}</small><button type="button" onClick={()=>overlayRaster(scene)}>{rasterSelected?.id===scene.id?'Hide image':'Show georeferenced preview'}</button></div>)}
+    {!rasterScenes.length&&<p className="small-muted">Import a licensed GeoTIFF in the Satellite Lab to display it on this map.</p>}
    </aside>
    <div className="gis-map-area">
     <div className="map-toolbar"><label><input type="checkbox" checked={showTiles} onChange={e=>setShowTiles(e.target.checked)}/> Online OpenStreetMap basemap (optional)</label><small>Basemap requires internet; uploaded features remain locally stored.</small></div>
     <MapContainer center={INITIAL_CENTER} zoom={10} scrollWheelZoom={true} className="gis-map">
      {showTiles&&<TileLayer attribution='&copy; OpenStreetMap contributors' url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png"/>}
      <ScaleControl position="bottomleft"/>
+     {rasterSelected&&rasterUrl&&<ImageOverlay url={rasterUrl} bounds={[[rasterSelected.bounds[1],rasterSelected.bounds[0]],[rasterSelected.bounds[3],rasterSelected.bounds[2]]]} opacity={0.78}/>}
      <MapLayers data={loaded} visible={visible}/>
     </MapContainer>
     <p className="small-muted">View is initially centred near Ghaziabad for demonstration only. Layers use their original imported geographic coordinates; sample polygons are synthetic, not official boundaries.</p>
