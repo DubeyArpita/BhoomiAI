@@ -1,6 +1,7 @@
-"""Advanced research tools for an evidence-auditable local BhoomiAI prototype.
+"""Provenance-focused analysis and batch import for BhoomiAI's local prototype.
 
-No automated claims about the entire literature or external data licensing.
+All graph relations are explicitly recorded, not automatically inferred facts.
+Descriptive time trends are not causal policy simulations.
 """
 from __future__ import annotations
 
@@ -8,193 +9,272 @@ import csv
 import io
 import math
 from collections import defaultdict
+from urllib.parse import urlsplit
 
 import psycopg
-from fastapi import APIRouter, Depends, File, HTTPException, UploadFile
-from pydantic import BaseModel, Field
+from fastapi import APIRouter, Depends, File, HTTPException, Query, UploadFile
+from fastapi.responses import StreamingResponse
 
 from .platform import conn, current_user, require_admin, audit
 
-router = APIRouter(prefix="/advanced", tags=["Advanced Research"])
-CSV_COLUMNS = (
+router = APIRouter(prefix="/advanced", tags=["Provenance and Data Quality"])
+
+COLUMNS = (
     "state", "district", "year", "indicator", "value",
-    "unit", "source_url", "dataset_name",
+    "unit", "source_url", "dataset_name"
 )
 MAX_CSV_BYTES = 2 * 1024 * 1024
 MAX_CSV_ROWS = 1000
 
 
-def parse_indicator_csv(content: bytes):
-    """Strict, atomic, provenance-required CSV validation before any inserts."""
+def parse_indicator_csv(data: bytes):
+    """Validate user-supplied CSV without silently repairing ambiguous values."""
     try:
-        decoded = content.decode("utf-8-sig")
-        table = csv.DictReader(io.StringIO(decoded, newline=""))
-    except UnicodeError as exc:
-        raise ValueError("CSV must use UTF-8.") from exc
-    if not table.fieldnames or set(table.fieldnames) != set(CSV_COLUMNS):
-        raise ValueError("CSV columns must be exactly: " + ", ".join(CSV_COLUMNS))
-    result = []
-    for number, row in enumerate(table, 2):
-        if number > MAX_CSV_ROWS + 1:
-            raise ValueError(f"Maximum {MAX_CSV_ROWS} data rows per import.")
-        if None in row or any(value is None for value in row.values()):
-            raise ValueError(f"Line {number}: unexpected or missing CSV fields.")
-        values = {key: row[key].strip() for key in CSV_COLUMNS}
-        if not all(values.values()):
-            raise ValueError(f"Line {number}: all fields including provenance are required.")
-        if any(len(values[k]) > limit for k,limit in (
-            ("state",100),("district",100),("indicator",120),
-            ("unit",50),("source_url",1000),("dataset_name",200))):
-            raise ValueError(f"Line {number}: field exceeds allowed length.")
-        if not values["source_url"].startswith(("https://","http://")):
-            raise ValueError(f"Line {number}: source_url must be an http(s) URL.")
-        try:
-            year = int(values["year"])
-            value = float(values["value"])
-        except ValueError as exc:
-            raise ValueError(f"Line {number}: invalid year or numeric value.") from exc
-        if not (1990 <= year <= 2100) or not math.isfinite(value):
-            raise ValueError(f"Line {number}: year or numeric value out of range.")
-        result.append(tuple(
-            year if key=="year" else value if key=="value" else values[key]
-            for key in CSV_COLUMNS
-        ))
-    if not result:
-        raise ValueError("CSV has no data rows.")
-    return result
+        raw = data.decode("utf-8-sig")
+        rows = csv.DictReader(io.StringIO(raw, newline=""))
+    except (UnicodeError, csv.Error) as exc:
+        raise ValueError("CSV must be valid UTF-8.") from exc
+    if not rows.fieldnames or any(col not in rows.fieldnames for col in COLUMNS):
+        raise ValueError("CSV header must contain: " + ", ".join(COLUMNS))
+    if len(rows.fieldnames) != len(set(rows.fieldnames)):
+        raise ValueError("Duplicate CSV header fields are not allowed.")
+    cleaned = []
+    try:
+        for index, entry in enumerate(rows, start=2):
+            if len(cleaned) >= MAX_CSV_ROWS:
+                raise ValueError(f"Maximum {MAX_CSV_ROWS} indicator rows.")
+            if not entry or None in entry:
+                raise ValueError(f"Row {index}: unexpected extra columns.")
+            item = {key: (entry.get(key) or "").strip() for key in COLUMNS}
+            for key in ("state", "district", "indicator", "unit", "source_url", "dataset_name"):
+                if not item[key]:
+                    raise ValueError(f"Row {index}: {key} cannot be empty.")
+            if any(len(item[k]) > width for k, width in (
+                ("state", 100), ("district", 100), ("indicator", 120),
+                ("unit", 50), ("source_url", 1000), ("dataset_name", 200)
+            )):
+                raise ValueError(f"Row {index}: field exceeds maximum length.")
+            try:
+                year = int(item["year"])
+                value = float(item["value"])
+            except ValueError as exc:
+                raise ValueError(f"Row {index}: invalid numeric year/value.") from exc
+            if not 1990 <= year <= 2100 or not math.isfinite(value):
+                raise ValueError(f"Row {index}: year out of range or value not finite.")
+            url = urlsplit(item["source_url"])
+            if url.scheme not in ("https", "http") or not url.netloc:
+                raise ValueError(f"Row {index}: source_url must be an absolute HTTP(S) URL.")
+            cleaned.append((
+                item["state"], item["district"], year, item["indicator"],
+                value, item["unit"], item["source_url"], item["dataset_name"]
+            ))
+    except csv.Error as exc:
+        raise ValueError("Malformed CSV: " + str(exc)) from exc
+    if not cleaned:
+        raise ValueError("CSV must contain at least one indicator.")
+    return cleaned
+
+
+def descriptive_trend(records):
+    """Return deltas only for a unique, unit-consistent observation per year."""
+    if not records:
+        return {"series": [], "changes": [], "warning": "No matching observations."}
+    grouped = defaultdict(list)
+    for entry in records:
+        grouped[entry["year"]].append(entry)
+    ambiguous = sorted(year for year, values in grouped.items() if len(values) != 1)
+    units = {entry["unit"] for entry in records}
+    series = sorted(records, key=lambda x: x["year"])
+    if ambiguous or len(units) != 1:
+        return {
+            "series": series, "changes": [], "ambiguous_years": ambiguous,
+            "warning": "No change calculated: repeated observations or mixed units. "
+                       "Select one comparable original dataset and remove duplicates."
+        }
+    changes = []
+    for earlier, later in zip(series, series[1:]):
+        delta = later["value"] - earlier["value"]
+        pct = None if earlier["value"] == 0 else 100 * delta / abs(earlier["value"])
+        changes.append({
+            "from_year": earlier["year"], "to_year": later["year"],
+            "absolute_change": round(delta, 5),
+            "percentage_change": round(pct, 3) if pct is not None else None,
+            "unit": earlier["unit"],
+        })
+    return {
+        "series": series, "changes": changes, "ambiguous_years": [],
+        "warning": "Descriptive observations only; source comparability is unverified. "
+                   "Changes do not establish policy impact or causality."
+    }
 
 
 @router.post("/indicators/import-csv", status_code=201)
-async def import_sourced_indicators(
-    file: UploadFile = File(...), user=Depends(require_admin),
-):
+async def import_indicators(file: UploadFile = File(...), user=Depends(require_admin)):
     if not (file.filename or "").lower().endswith(".csv"):
-        raise HTTPException(422, "Upload a UTF-8 .csv file.")
-    payload=await file.read(MAX_CSV_BYTES+1)
-    if len(payload)>MAX_CSV_BYTES:
-        raise HTTPException(413,"CSV must not exceed 2 MB.")
+        raise HTTPException(422, "Choose a .csv file.")
+    data = await file.read(MAX_CSV_BYTES + 1)
+    if len(data) > MAX_CSV_BYTES:
+        raise HTTPException(413, "CSV exceeds 2 MB.")
     try:
-        records=parse_indicator_csv(payload)
+        rows = parse_indicator_csv(data)
     except ValueError as exc:
-        raise HTTPException(422,str(exc)) from exc
-    # One transaction; an error never leaves a half-imported dataset.
+        raise HTTPException(422, str(exc)) from exc
+    # All records are inserted in a single database transaction.
     with conn() as db:
         with db.cursor() as cur:
             cur.executemany(
-                """INSERT INTO land_indicators(
-                    state,district,year,indicator,value,unit,source_url,
-                    dataset_name,entered_by) VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s)""",
-                [(*row,user["id"]) for row in records],
+                """INSERT INTO land_indicators
+                   (state,district,year,indicator,value,unit,source_url,dataset_name,entered_by)
+                   VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s)""",
+                [(*entry, user["id"]) for entry in rows]
             )
-        audit(db,user["id"],"bulk_import_sourced_indicators",len(records))
-    return {"imported":len(records),"notice":"Only local user-supplied records; original data and licences are not independently verified."}
+        audit(db, user["id"], "bulk_import_indicators", f"{len(rows)} rows")
+    return {"imported": len(rows), "interpretation": "User-entered source-attributed data; original source is not independently verified."}
 
 
-@router.get("/evidence-links/{document_id}")
-def candidate_evidence_links(
-    document_id: int, limit: int = 6, user=Depends(current_user),
-):
-    """Nearest cross-document excerpts as candidate links, not verified agreement."""
-    if not 1 <= limit <= 12:
-        raise HTTPException(422,"limit must be between 1 and 12.")
+@router.get("/indicators/template")
+def indicator_template(user=Depends(current_user)):
+    content = ",".join(COLUMNS) + "\r\n"
+    return StreamingResponse(
+        io.BytesIO(content.encode("utf-8")), media_type="text/csv",
+        headers={"Content-Disposition": "attachment; filename=indicator_template.csv"}
+    )
+
+
+@router.get("/indicators/export")
+def export_indicators(user=Depends(current_user)):
     with conn() as db:
-        source=db.execute(
-            "SELECT id,COALESCE(title,filename),source_url FROM documents WHERE id=%s",
-            (document_id,),
-        ).fetchone()
-        if not source:
-            raise HTTPException(404,"Source document not found.")
-        vectors=db.execute(
-            "SELECT id,embedding,content,page_number FROM chunks "
-            "WHERE document_id=%s ORDER BY id LIMIT 3",(document_id,),
+        rows = db.execute(
+            """SELECT state,district,year,indicator,value,unit,source_url,dataset_name
+               FROM land_indicators ORDER BY state,district,indicator,year,id
+               LIMIT 10000"""
         ).fetchall()
-        if not vectors:
-            return {"document":{"id":source[0],"title":source[1]},"links":[],
-                    "warning":"Document has no indexed excerpts."}
-        candidates={}
-        for chunk_id,vector,content,page in vectors:
-            rows=db.execute(
-                """SELECT d.id,COALESCE(d.title,d.filename),d.source_url,
-                   c.id,c.page_number,c.content,
-                   1-(c.embedding <=> %s::vector) similarity
-                   FROM chunks c JOIN documents d ON d.id=c.document_id
-                   WHERE d.id<>%s
-                   ORDER BY c.embedding <=> %s::vector LIMIT %s""",
-                (str(vector),document_id,str(vector),limit*3),
-            ).fetchall()
-            for r in rows:
-                other_id=r[0]
-                if other_id not in candidates or float(r[6])>candidates[other_id]["similarity"]:
-                    candidates[other_id]={
-                        "document_id":other_id,"title":r[1],"source_url":r[2],
-                        "source_chunk_id":chunk_id,"source_page":page,
-                        "source_excerpt":content[:700],"target_chunk_id":r[3],
-                        "target_page":r[4],"target_excerpt":r[5][:700],
-                        "similarity":round(float(r[6]),4),
-                        "relation":"semantically_similar_candidate",
-                    }
-    links=sorted(candidates.values(),key=lambda x:x["similarity"],reverse=True)[:limit]
-    return {"document":{"id":source[0],"title":source[1],"source_url":source[2]},
-            "links":links,
-            "warning":"Similarity is not evidence of agreement, citation, causation or scientific validity. Review both original sources."}
+    handle = io.StringIO()
+    writer = csv.writer(handle)
+    writer.writerow(COLUMNS)
+    writer.writerows(rows)
+    return StreamingResponse(
+        io.BytesIO(handle.getvalue().encode("utf-8-sig")), media_type="text/csv",
+        headers={"Content-Disposition": "attachment; filename=land_indicators.csv"}
+    )
 
 
-class EvidenceCoverageQuery(BaseModel):
-    states: list[str] = Field(min_length=1,max_length=8)
-    topics: list[str] = Field(min_length=1,max_length=12)
-    minimum_similarity:float=Field(default=.48,ge=.2,le=.95)
-
-
-@router.post("/coverage-evidence")
-def coverage_with_provenance(body:EvidenceCoverageQuery,user=Depends(current_user)):
-    """Expose top excerpts behind each indexed-corpus coverage cell."""
-    from .main import model,vector_literal
-    cells=[]
-    for state in body.states:
-        region=state.strip()
-        if not region or len(region)>100:
-            raise HTTPException(422,"Every state name must contain 1-100 characters.")
-        for topic in body.topics:
-            topic=topic.strip()
-            if len(topic)<2 or len(topic)>160:
-                raise HTTPException(422,"Each topic must contain 2-160 characters.")
-            vector=vector_literal(model().encode(
-                "Land governance research: "+topic,normalize_embeddings=True))
-            with conn() as db:
-                rows=db.execute(
-                    """SELECT d.id,COALESCE(d.title,d.filename),d.source_url,
-                       c.id,c.page_number,c.content,
-                       1-(c.embedding <=> %s::vector) similarity
-                       FROM chunks c JOIN documents d ON d.id=c.document_id
-                       WHERE d.state ILIKE %s
-                         AND 1-(c.embedding <=> %s::vector) >= %s
-                       ORDER BY similarity DESC LIMIT 100""",
-                    (vector,region,vector,body.minimum_similarity),
-                ).fetchall()
-            by_doc={}
-            for r in rows:
-                if r[0] not in by_doc:
-                    by_doc[r[0]]={
-                        "document_id":r[0],"title":r[1],"source_url":r[2],
-                        "chunk_id":r[3],"page":r[4],"excerpt":r[5][:700],
-                        "similarity":round(float(r[6]),4),
-                    }
-            cells.append({"state":region,"topic":topic,
-                          "matching_indexed_documents":len(by_doc),
-                          "evidence":list(by_doc.values())[:5]})
-    return {"results":cells,"notice":"Only documents indexed locally and manually tagged to the region. Empty cells are collection gaps, NOT proven gaps in published research."}
-
-
-@router.get("/public-source-registry")
-def source_registry(user=Depends(current_user)):
-    """Discovery links, not an automated connector or a claim of download rights."""
-    return [
-        {"name":"Department of Land Resources","url":"https://dolr.gov.in/",
-         "category":"Land administration reports","access":"Check document-specific reuse conditions."},
-        {"name":"India Open Government Data","url":"https://www.data.gov.in/",
-         "category":"Public statistical datasets","access":"Check each dataset licence and API requirements."},
-        {"name":"Copernicus Data Space","url":"https://dataspace.copernicus.eu/",
-         "category":"Satellite data catalogue","access":"Registration and dataset terms may apply."},
-        {"name":"ISRO Bhuvan","url":"https://bhuvan.nrsc.gov.in/",
-         "category":"Indian geospatial reference","access":"Availability and reuse vary by layer."},
+@router.get("/indicators/trends")
+def indicator_trends(
+    state: str = Query(min_length=2),
+    district: str = Query(min_length=2),
+    indicator: str = Query(min_length=2),
+    user=Depends(current_user),
+):
+    with conn() as db:
+        rows = db.execute(
+            """SELECT year,value,unit,source_url,dataset_name FROM land_indicators
+               WHERE state ILIKE %s AND district ILIKE %s AND indicator ILIKE %s
+               ORDER BY year,id LIMIT 1000""",
+            (state, district, indicator)
+        ).fetchall()
+    records = [
+        {"year": row[0], "value": row[1], "unit": row[2],
+         "source_url": row[3], "dataset_name": row[4]} for row in rows
     ]
+    return {
+        "query": {"state": state, "district": district, "indicator": indicator},
+        **descriptive_trend(records)
+    }
+
+
+@router.get("/data-readiness")
+def data_readiness(user=Depends(current_user)):
+    with conn() as db:
+        docs = db.execute(
+            """SELECT COUNT(*), COUNT(*) FILTER (WHERE COALESCE(source_url,'')=''),
+               COUNT(*) FILTER (WHERE COALESCE(state,'')=''),
+               COUNT(*) FILTER (WHERE COALESCE(district,'')='')
+               FROM documents"""
+        ).fetchone()
+        regions = db.execute(
+            """SELECT state,district,COUNT(DISTINCT year),
+                      COUNT(DISTINCT indicator), COUNT(*)
+               FROM land_indicators GROUP BY state,district ORDER BY COUNT(*) DESC LIMIT 100"""
+        ).fetchall()
+        projects = db.execute(
+            """SELECT COUNT(*),COUNT(*) FILTER(WHERE review_status='confirmed'),
+                      COUNT(*) FILTER(WHERE review_status='pending')
+               FROM research_notes"""
+        ).fetchone()
+    return {
+        "documents": {"total": docs[0], "missing_source_url": docs[1],
+                      "missing_state_tag": docs[2], "missing_district_tag": docs[3]},
+        "indicator_coverage": [
+            {"state": row[0], "district": row[1], "years": row[2],
+             "indicators": row[3], "observations": row[4]} for row in regions
+        ],
+        "evidence_notes": {"total": projects[0], "confirmed": projects[1],
+                           "pending": projects[2]},
+        "warning": "Coverage is limited to uploaded sources. Metadata is entered by users; "
+                   "counts neither certify authenticity nor establish real research gaps."
+    }
+
+
+@router.get("/provenance-graph")
+def provenance_graph(user=Depends(current_user)):
+    """Explicit, traceable graph with source URLs and scoped collaboration evidence."""
+    nodes, edges = {}, []
+    def add_node(node_id, label, category, **data):
+        nodes[node_id] = {"id": node_id, "label": label, "type": category, **data}
+    def link(source, target, relation, evidence_id=None):
+        edges.append({"source": source, "target": target, "relation": relation,
+                      "evidence_id": evidence_id})
+    with conn() as db:
+        documents = db.execute(
+            """SELECT id,COALESCE(NULLIF(title,''),filename),state,district,source_url
+               FROM documents ORDER BY id LIMIT 200"""
+        ).fetchall()
+        for doc_id, title, state, district, url in documents:
+            identifier = f"doc:{doc_id}"
+            add_node(identifier, title, "document", source_url=url or None)
+            if url:
+                sid = "source:" + url
+                add_node(sid, url, "source", source_url=url)
+                link(identifier, sid, "source_metadata")
+            if state:
+                tag = "state:" + state.casefold()
+                add_node(tag, state, "state")
+                link(identifier, tag, "manually_tagged")
+            if district:
+                tag = "district:" + (state or "").casefold() + ":" + district.casefold()
+                add_node(tag, district, "district")
+                link(identifier, tag, "manually_tagged")
+        project_rows = db.execute(
+            """SELECT id,title FROM research_projects
+               WHERE %s='admin' OR created_by=%s OR EXISTS (
+                 SELECT 1 FROM project_members m
+                 WHERE m.project_id=research_projects.id AND m.user_id=%s)
+               LIMIT 100""",
+            (user["role"], user["id"], user["id"])
+        ).fetchall()
+        for project_id, title in project_rows:
+            project = f"project:{project_id}"
+            add_node(project, title, "project")
+            notes = db.execute(
+                """SELECT id,document_id,source_url,review_status
+                   FROM research_notes WHERE project_id=%s LIMIT 250""",
+                (project_id,)
+            ).fetchall()
+            for nid, doc_id, url, status in notes:
+                note = f"note:{nid}"
+                add_node(note, f"Evidence note {nid} ({status})", "research_note",
+                         review_status=status)
+                link(project, note, "project_note", nid)
+                if doc_id and f"doc:{doc_id}" in nodes:
+                    link(note, f"doc:{doc_id}", "user_linked_document", nid)
+                if url:
+                    sid = "source:" + url
+                    add_node(sid, url, "source", source_url=url)
+                    link(note, sid, "note_source_url", nid)
+    return {
+        "nodes": list(nodes.values()), "edges": edges,
+        "provenance_policy": "Only stored metadata and explicit research-note links. "
+                             "Note review status is shown; source authenticity is not verified. "
+                             "No inferred biomedical, administrative or causal relationship."
+    }
