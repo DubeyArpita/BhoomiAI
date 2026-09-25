@@ -16,6 +16,7 @@ from fastapi import APIRouter, File, Form, HTTPException, UploadFile
 from fastapi.responses import Response
 from PIL import Image
 from rasterio.enums import Resampling
+from rasterio.vrt import WarpedVRT
 from rasterio.warp import reproject
 from .gis import geo_connection
 
@@ -126,7 +127,7 @@ def stretched_byte(band,valid):
 @router.get("/scenes/{scene_id}/preview")
 def preview(scene_id:uuid.UUID):
     path=find_scene(scene_id)
-    with rasterio.open(path) as ds:
+    with rasterio.open(path) as src, WarpedVRT(src,crs='EPSG:4326') as ds:
         factor=max(1,int(np.ceil(max(ds.width,ds.height)/1024)))
         shape=(max(1,ds.height//factor),max(1,ds.width//factor))
         indexes=(1,2,3) if ds.count>=3 else (1,)
