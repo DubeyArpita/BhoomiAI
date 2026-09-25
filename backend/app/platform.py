@@ -19,6 +19,8 @@ import psycopg
 from fastapi import APIRouter, Depends, HTTPException, Request
 from fastapi.responses import StreamingResponse
 from itsdangerous import BadSignature, SignatureExpired, URLSafeTimedSerializer
+from dotenv import load_dotenv
+load_dotenv()
 from pydantic import BaseModel, Field
 
 from .gis import geo_connection
