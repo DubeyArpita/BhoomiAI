@@ -209,3 +209,28 @@ are labelled as demonstrations, **never official survey records**.
 automated access to cadastral/landowner records, validated causal policy
 simulation, robust optical/SAR fusion, automatic legal land-use classification,
 exhaustive document citation verification or enterprise security certification.
+
+
+## Advanced source provenance, CSV indicators and data readiness
+
+The **Data & Provenance** tab exposes additive Stage 3–5 functionality:
+- Import up to 1,000 user-supplied sourced indicator observations from UTF-8 CSV;
+  download a blank template, export indexed indicators and inspect metadata completeness.
+- Descriptive year-on-year changes for exact state, district and indicator matches.
+  Calculations are suppressed for duplicate year observations or inconsistent units.
+- A provenance graph containing only recorded document tags, source URLs, and
+  explicit research notes from authorized projects, including their review status.
+
+New authenticated endpoints:
+`GET /advanced/data-readiness`,
+`GET /advanced/provenance-graph`,
+`GET /advanced/indicators/template`,
+`POST /advanced/indicators/import-csv` (administrator only),
+`GET /advanced/indicators/export`, and
+`GET /advanced/indicators/trends?state=...&district=...&indicator=...`.
+
+These tools help expose *coverage and missing metadata within our own repository*.
+They do not automatically establish scientific research gaps, authenticate linked
+sources, validate policy effectiveness or derive real land-use statistics. Check
+original publications and reuse rights independently. Run `python -m pytest -q backend/tests`
+in an environment with the backend dependencies installed.
