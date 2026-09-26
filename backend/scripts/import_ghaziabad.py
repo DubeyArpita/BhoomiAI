@@ -20,7 +20,7 @@ import httpx
 ROOT = Path(__file__).resolve().parents[2]
 BOUNDARY = ROOT / "datasets/gis/boundaries/uttar_pradesh/Ghaziabad_Boundary.geojson"
 WORLD_COVER = ROOT / "datasets/satellite/esa_worldcover/2021/original/Ghaziabad_WorldCover_2021.tif.tif"
-REPORTS = ROOT / "datasets/dilrmp/Uttar Pradesh/ghaziabad"
+REPORTS = ROOT / "datasets/dilrmp/Uttar Pradesh/state_reports"
 SOURCE_BOUNDARY = "https://onlinemaps.surveyofindia.gov.in/"
 SOURCE_WORLDCOVER = "https://esa-worldcover.org/en/data-access"
 SOURCE_DILRMP = "https://dilrmp.gov.in/reports/download-progress-report"
@@ -48,7 +48,7 @@ def main():
     sheets = sorted(REPORTS.glob("*.xlsx"))
     print(f"Boundary: {BOUNDARY if BOUNDARY.is_file() else 'MISSING'}")
     print(f"Land cover: {WORLD_COVER if WORLD_COVER.is_file() else 'MISSING'}")
-    print(f"DILRMP Ghaziabad sheets ({len(sheets)}):")
+    print(f"DILRMP Uttar Pradesh state-wide sheets ({len(sheets)}):")
     for path in sheets:
         print(f"  {path.name} ({path.stat().st_size / 1048576:.1f} MB)")
     if args.dry_run:
@@ -126,8 +126,8 @@ def main():
                     client, "POST", "/documents/jobs",
                     files={"file": (path.name, handle,
                                     "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")},
-                    data={"title": f"DILRMP Ghaziabad: {path.stem}",
-                          "state": "Uttar Pradesh", "district": "Ghaziabad",
+                    data={"title": f"DILRMP Uttar Pradesh: {path.stem}",
+                          "state": "Uttar Pradesh", "district": "",
                           "source_url": SOURCE_DILRMP},
                 )
             job_id = job["job_id"]
