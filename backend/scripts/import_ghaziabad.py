@@ -112,6 +112,18 @@ def main():
 
         indexed = request(client, "GET", "/documents")
         names = {d["filename"] for d in indexed}
+        # Older importer versions mistakenly labelled state-wide workbooks as
+        # Ghaziabad-only. Correct known filenames using the audited admin API.
+        current_by_filename = {d["filename"]: d for d in indexed}
+        for path in sheets:
+            prior = current_by_filename.get(path.name)
+            if prior and (prior.get("district") or prior.get("title", "").startswith("DILRMP Ghaziabad")):
+                request(client, "PATCH", f"/documents/{prior['id']}/metadata", json={
+                    "title": "DILRMP Uttar Pradesh: " + path.stem,
+                    "state": "Uttar Pradesh", "district": "",
+                    "source_url": SOURCE_DILRMP,
+                })
+                print(f"[FIX] Corrected state-level metadata for {path.name}")
         if not sheets:
             print("[SKIP] No Ghaziabad XLSX files found")
         for path in sheets:
