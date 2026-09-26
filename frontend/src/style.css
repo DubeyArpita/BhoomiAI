@@ -11,3 +11,34 @@
 
 /* Data and provenance workflows */
 .advanced{padding-bottom:40px}.advanced>header{padding:25px 4%}.advanced-buttons{display:flex;gap:8px;flex-wrap:wrap}.advanced-buttons button{margin:5px 0}.advanced .hub-panel{min-width:0}.advanced-relations{max-height:340px;overflow:auto}.advanced .hub-panel form{display:flex;flex-direction:column;gap:12px}.advanced .hub-panel input{display:block;width:100%;margin-top:6px;padding:9px;border:1px solid #c3d6c5;border-radius:7px}
+
+/* Source-auditable real government DILRMP dashboard */
+.main-nav{flex-wrap:wrap}
+.dilrmp-page{padding-bottom:40px;color:#283d30}
+.dilrmp-header{padding:24px 4%}
+.dilrmp-content{max-width:1160px;padding:20px 4%;margin:auto}
+.dilrmp-filters{display:flex;align-items:end;gap:16px;flex-wrap:wrap;margin-bottom:18px;padding:18px;background:#fff;border:1px solid #dbe7dc;border-radius:12px}
+.dilrmp-filters label{font-weight:700;font-size:13px;display:flex;flex-direction:column;gap:6px;min-width:180px}
+.dilrmp-filters select{padding:10px;border-radius:8px;border:1px solid #b6d0ba;max-width:260px}
+.dilrmp-filters button{margin:0}
+.dilrmp-disclaimer{background:#fff6e6;padding:16px 20px;margin:16px 0;border-left:4px solid #d5a44b;border-radius:9px;font-size:13px;line-height:1.55}
+.dilrmp-disclaimer p{margin:8px 0 0}
+.dilrmp-report{margin:18px 0;max-width:none;padding:22px;border:1px solid #d8e7dc;background:#fff;border-radius:12px}
+.dilrmp-report-head{display:flex;flex-wrap:wrap;align-items:center;justify-content:space-between;gap:12px}
+.dilrmp-report-head h3{margin:0;color:#204d35}
+.dilrmp-report-head a{color:#2d7751;font-size:13px}
+.dilrmp-mini-cards{display:grid;grid-template-columns:repeat(auto-fit,minmax(170px,1fr));gap:14px;margin:20px 0}
+.dilrmp-mini{padding:17px;background:#eef5ef;border:1px solid #dcebdd;border-radius:9px}
+.dilrmp-mini small{display:block;color:#4c6653;min-height:35px}
+.dilrmp-mini strong{display:block;font-size:26px;color:#286a4c;margin:5px 0}
+.dilrmp-cite{display:block;color:#698171;font-size:11px;margin-top:10px}
+.dilrmp-bar{height:8px;border-radius:9px;overflow:hidden;background:#d4e0d5}
+.dilrmp-bar span{display:block;background:#41936a;height:100%}
+.dilrmp-outline{background:#edf3ee!important;color:#2c5e42!important;border:1px solid #a4c6af!important;font-size:12px;padding:9px 14px;margin:5px 0}
+.dilrmp-table-scroll{overflow-x:auto;max-height:480px;overflow-y:auto}
+.dilrmp-table-scroll table{border-collapse:collapse;width:100%;margin-top:12px;font-size:12px}
+.dilrmp-table-scroll th,.dilrmp-table-scroll td{border-bottom:1px solid #dfeadf;text-align:left;padding:10px;white-space:nowrap}
+.dilrmp-table-scroll th{background:#edf5ee;position:sticky;top:0}
+.dilrmp-table-scroll td:first-child{white-space:normal}
+.dilrmp-foot{border-top:1px solid #e4eee4;margin-top:14px;padding-top:10px;color:#6b7d6e;font-size:11px;overflow-wrap:anywhere}
+@media(max-width:760px){.dilrmp-filters{align-items:stretch;flex-direction:column}.dilrmp-filters label,.dilrmp-filters select{width:100%;max-width:none}}
