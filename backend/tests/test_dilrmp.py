@@ -46,3 +46,16 @@ def test_state_report_includes_many_districts_not_just_ghaziabad():
     assert len(district_rows) >= 70
     assert "GHAZIABAD" in district_rows
     assert "AGRA" in district_rows
+
+
+def test_categorical_worldcover_preview_preserves_classes():
+    import numpy as np
+    from app.raster import colorize_worldcover, WORLDCOVER_PALETTE
+    classes=np.array([[10,40,50,0],[80,95,100,20]],dtype=np.uint8)
+    valid=np.array([[True,True,True,False],[True,True,True,True]])
+    rgba=colorize_worldcover(classes,valid)
+    assert rgba.shape==(2,4,4)
+    assert tuple(rgba[0,0,:3])==WORLDCOVER_PALETTE[10]
+    assert tuple(rgba[0,2,:3])==WORLDCOVER_PALETTE[50]
+    assert rgba[0,3,3]==0
+    assert (rgba[:,:,3]==255).sum()==7
