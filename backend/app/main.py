@@ -13,17 +13,18 @@ import fitz
 import httpx
 import psycopg
 from dotenv import load_dotenv
-from fastapi import BackgroundTasks, FastAPI, File, Form, HTTPException, Query, UploadFile
+from fastapi import BackgroundTasks, Depends, FastAPI, File, Form, HTTPException, Query, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, Field
 from sentence_transformers import SentenceTransformer
 from openpyxl import load_workbook
 import io
 from fastapi.responses import JSONResponse
-from .platform import router as platform_router, init_platform_database, authenticate_token
+from .platform import router as platform_router, init_platform_database, authenticate_token, require_admin, audit
 from .raster import router as raster_router, init_raster_database
 from .gis import router as gis_router, init_geo_database
 from .advanced import router as advanced_router
+from .dilrmp import router as dilrmp_router
 
 load_dotenv()
 DB_URL = os.getenv("DATABASE_URL", "postgresql://bhoomi:bhoomi_dev_only@localhost:5433/bhoomiai")
@@ -91,6 +92,7 @@ app.include_router(gis_router)
 app.include_router(platform_router)
 app.include_router(raster_router)
 app.include_router(advanced_router)
+app.include_router(dilrmp_router)
 
 @app.middleware("http")
 async def require_session(request, call_next):
@@ -98,7 +100,7 @@ async def require_session(request, call_next):
     public={"/health","/docs","/openapi.json","/redoc",
             "/platform/auth/bootstrap","/platform/auth/login"}
     protected=path.startswith(("/documents","/search","/chat","/gis",
-                                "/raster","/platform","/advanced"))
+                                "/raster","/platform","/advanced","/dilrmp"))
     if request.method=="OPTIONS" or path in public or not protected:
         return await call_next(request)
     auth=request.headers.get("Authorization","")
@@ -350,6 +352,40 @@ def delete_document(document_id: int):
         raise HTTPException(404, "Document not found")
     return {"deleted": document_id, "filename": deleted[0]}
 
+
+
+class DocumentMetadataPatch(BaseModel):
+    """Optional corrections for mistaken manual geographic tagging."""
+    title: str | None = Field(default=None, max_length=300)
+    state: str | None = Field(default=None, max_length=120)
+    district: str | None = Field(default=None, max_length=120)
+    source_url: str | None = Field(default=None, max_length=1000)
+
+
+@app.patch("/documents/{document_id}/metadata")
+def correct_document_metadata(
+    document_id: int, patch: DocumentMetadataPatch,
+    user=Depends(require_admin),
+):
+    supplied = patch.model_dump(exclude_unset=True)
+    if not supplied:
+        raise HTTPException(422, "No metadata fields supplied.")
+    if supplied.get("source_url") and not supplied["source_url"].startswith(("http://", "https://")):
+        raise HTTPException(422, "Original source URL must be HTTP(S).")
+    if any(value is None for value in supplied.values()):
+        raise HTTPException(422, "Use an empty string to clear a geographic tag.")
+    # Whitelist column names from the fixed Pydantic model, not user input.
+    names = [key for key in ("title", "state", "district", "source_url") if key in supplied]
+    with conn() as db:
+        if not db.execute("SELECT 1 FROM documents WHERE id=%s", (document_id,)).fetchone():
+            raise HTTPException(404, "Document not found.")
+        assignments = ", ".join(name + "=%s" for name in names)
+        db.execute(
+            "UPDATE documents SET " + assignments + " WHERE id=%s",
+            [supplied[name].strip() for name in names] + [document_id],
+        )
+        audit(db, user["id"], "correct_document_metadata", document_id)
+    return {"id": document_id, "updated_fields": names}
 
 def retrieve(question, limit=6, state='', district=''):
     emb = vector_literal(model().encode(question, normalize_embeddings=True))

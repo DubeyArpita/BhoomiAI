@@ -258,7 +258,7 @@ register the files on your own computer.
    BhoomiAI administrator email and password** at the prompts; credentials
    are not stored in the repository.
 4. The importer registers the Ghaziabad Survey of India GeoJSON and clipped
-   ESA WorldCover 2021 raster, then indexes four Ghaziabad XLSX workbooks for
+   ESA WorldCover 2021 raster, then indexes state-wide Uttar Pradesh XLSX workbooks for
    grounded local search. It skips already-imported dataset names/filenames.
    National PDFs and state-wide reports can be uploaded individually using
    the AI Research UI, with their actual geography and source metadata.
@@ -277,3 +277,42 @@ scanned PDFs as text without an explicit OCR and verification workflow.
 The 2021 annual WorldCover composite is stored with 2021-12-31 in the existing
 required `capture_date` column **as a year-end placeholder, not as a scene
 acquisition date**. Check original government and ESA terms before reuse.
+
+
+## Real-data DILRMP district dashboard
+
+The new **District Dashboard** tab reads your committed original state-wide
+DILRMP Excel reports directly, extracts the requested district row and displays
+source-cell-referenced metrics for Computerization of Land Records, Map
+Digitization, Modern Record Rooms and Survey/Re-Survey. Choose Ghaziabad or
+another Uttar Pradesh district; optionally select a second district to compare
+the source snapshots. Export all visible source metrics as a provenance-labelled
+CSV.
+
+**Important correction:** The Excel files stored in the original
+`datasets/dilrmp/Uttar Pradesh/ghaziabad/` folder actually contain all
+Uttar Pradesh districts. The dashboard uses the original
+`datasets/dilrmp/Uttar Pradesh/state_reports/` copies. Never assign
+a state-wide workbook the `district=Ghaziabad` document tag.
+
+After pulling and restarting FastAPI, rerunning
+`python backend/scripts/import_ghaziabad.py` automatically corrects an older
+mistaken Ghaziabad document tag if that workbook was already indexed, while
+leaving the original uploaded bytes and vector index intact. The administrator
+can also correct metadata through
+`PATCH /documents/{id}/metadata` with a JSON body containing fields to change.
+
+The dashboard validates the official Excel sheet titles and exact headers,
+shows missing or changed files rather than inventing data, includes original
+workbook/worksheet/cell coordinates and the source downloads URL, and never
+assumes an unverified reporting date. Bar charts display reported completion
+percentages only. No history, causality, real-time government integration, or
+district-level land ownership is inferred.
+
+The GIS Explorer additionally displays ESA WorldCover category colours with
+transparent no-data pixels and a matching class legend. The raw class codes
+are preserved for area analysis. Only the original 2021 land-cover baseline
+is available until you obtain suitable Sentinel-2 red/NIR scenes.
+
+To inspect future changes to the downloaded official spreadsheets:
+`python backend/scripts/inspect_dilrmp.py`.
