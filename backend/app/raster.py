@@ -124,22 +124,50 @@ def stretched_byte(band,valid):
     return result.astype(np.uint8)
 
 
+# Categorical visualization colours for ESA WorldCover v200.
+# The original class codes remain unchanged for statistical calculations.
+WORLDCOVER_PALETTE = {
+    10:(0,100,0),20:(255,187,34),30:(255,255,76),40:(240,150,255),
+    50:(250,0,0),60:(180,180,180),70:(240,240,240),80:(0,100,200),
+    90:(0,150,160),95:(0,207,117),100:(250,230,160),
+}
+
+
+def colorize_worldcover(classes, valid):
+    """Return transparent RGBA preview from original categorical pixels."""
+    rgba = np.zeros((*classes.shape, 4), dtype=np.uint8)
+    for code, rgb in WORLDCOVER_PALETTE.items():
+        selected = valid & (classes == code)
+        rgba[selected, :3] = rgb
+        rgba[selected, 3] = 255
+    return rgba
+
+
 @router.get("/scenes/{scene_id}/preview")
 def preview(scene_id:uuid.UUID):
     path=find_scene(scene_id)
-    with rasterio.open(path) as src, WarpedVRT(src,crs='EPSG:4326') as ds:
+    with geo_connection() as db:
+        row=db.execute("SELECT title,platform FROM raster_scenes WHERE id=%s",
+                       (scene_id,)).fetchone()
+    is_cover=bool(row and "worldcover" in (row[0]+" "+row[1]).lower())
+    method=Resampling.nearest if is_cover else Resampling.bilinear
+    with rasterio.open(path) as src, WarpedVRT(src,crs='EPSG:4326',resampling=method) as ds:
         factor=max(1,int(np.ceil(max(ds.width,ds.height)/1024)))
         shape=(max(1,ds.height//factor),max(1,ds.width//factor))
-        indexes=(1,2,3) if ds.count>=3 else (1,)
-        raw=ds.read(indexes,out_shape=(len(indexes),*shape),
-                    resampling=Resampling.bilinear).astype(np.float32)
-        mask=ds.read_masks(1,out_shape=shape)>0
-        if len(indexes)==1:
-            image=Image.fromarray(stretched_byte(raw[0],mask),"L")
+        mask=ds.read_masks(1,out_shape=shape,resampling=Resampling.nearest)>0
+        if is_cover:
+            classes=ds.read(1,out_shape=shape,resampling=Resampling.nearest)
+            image=Image.fromarray(colorize_worldcover(classes,mask),"RGBA")
         else:
-            # RGB band assignment is user-dependent. This is display only.
-            rgb=np.moveaxis(np.array([stretched_byte(b,mask) for b in raw]),0,-1)
-            image=Image.fromarray(rgb,"RGB")
+            indexes=(1,2,3) if ds.count>=3 else (1,)
+            raw=ds.read(indexes,out_shape=(len(indexes),*shape),
+                        resampling=Resampling.bilinear).astype(np.float32)
+            if len(indexes)==1:
+                image=Image.fromarray(stretched_byte(raw[0],mask),"L")
+            else:
+                # RGB band assignment depends on source; visualization only.
+                rgb=np.moveaxis(np.array([stretched_byte(b,mask) for b in raw]),0,-1)
+                image=Image.fromarray(rgb,"RGB")
         buf=io.BytesIO()
         image.save(buf,format="PNG")
     return Response(content=buf.getvalue(),media_type="image/png",
