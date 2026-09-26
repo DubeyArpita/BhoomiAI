@@ -24,6 +24,7 @@ from .platform import router as platform_router, init_platform_database, authent
 from .raster import router as raster_router, init_raster_database
 from .gis import router as gis_router, init_geo_database
 from .advanced import router as advanced_router
+from .dilrmp import router as dilrmp_router
 
 load_dotenv()
 DB_URL = os.getenv("DATABASE_URL", "postgresql://bhoomi:bhoomi_dev_only@localhost:5433/bhoomiai")
@@ -91,6 +92,7 @@ app.include_router(gis_router)
 app.include_router(platform_router)
 app.include_router(raster_router)
 app.include_router(advanced_router)
+app.include_router(dilrmp_router)
 
 @app.middleware("http")
 async def require_session(request, call_next):
@@ -98,7 +100,7 @@ async def require_session(request, call_next):
     public={"/health","/docs","/openapi.json","/redoc",
             "/platform/auth/bootstrap","/platform/auth/login"}
     protected=path.startswith(("/documents","/search","/chat","/gis",
-                                "/raster","/platform","/advanced"))
+                                "/raster","/platform","/advanced","/dilrmp"))
     if request.method=="OPTIONS" or path in public or not protected:
         return await call_next(request)
     auth=request.headers.get("Authorization","")
