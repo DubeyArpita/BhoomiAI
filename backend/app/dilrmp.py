@@ -29,6 +29,7 @@ REPORTS = {
     "clr": {
         "filename": "Computerization of Land Records (CLR).xlsx",
         "title": "Computerization of Land Records",
+        "sheet_title": "Computerization of Land Records (CLR)",
         "header_row": 7,
         "headers": {2: "District Name", 3: "Total Tehsils", 4: "Total Villages",
                     5: "No. of RoR", 10: "No. of Villages Where CLR Completed"},
@@ -79,6 +80,7 @@ REPORTS = {
     "mrr": {
         "filename": "Modern Record Room (MRR).xlsx",
         "title": "Modern Record Room",
+        "sheet_title": "Modern Record Room (MRR)",
         "header_row": 7,
         "headers": {2: "District Name", 3: "Total Tehsils",
                     4: "MRR Sanctioned", 6: "MRR Completed (Out of Total)"},
@@ -135,7 +137,7 @@ def read_report(key, path_str, modified_ns):
     book = load_workbook(path_str, read_only=True, data_only=True)
     try:
         sheet = book.active
-        if str(sheet.cell(4, 1).value or "").strip().lower() != spec["title"].lower():
+        if str(sheet.cell(4, 1).value or "").strip().lower() != spec.get("sheet_title", spec["title"]).lower():
             raise ValueError(f"Unexpected report title in {Path(path_str).name}")
         headers = next(sheet.iter_rows(
             min_row=spec["header_row"], max_row=spec["header_row"], values_only=True
