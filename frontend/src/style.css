@@ -42,3 +42,5 @@
 .dilrmp-table-scroll td:first-child{white-space:normal}
 .dilrmp-foot{border-top:1px solid #e4eee4;margin-top:14px;padding-top:10px;color:#6b7d6e;font-size:11px;overflow-wrap:anywhere}
 @media(max-width:760px){.dilrmp-filters{align-items:stretch;flex-direction:column}.dilrmp-filters label,.dilrmp-filters select{width:100%;max-width:none}}
+
+.cover-swatch{display:inline-block;width:12px;height:12px;border:1px solid #667;border-radius:2px;vertical-align:middle;margin-right:6px}
