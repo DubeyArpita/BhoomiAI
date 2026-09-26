@@ -6,6 +6,7 @@ import {apiFetch} from './api.js';
 const API='/api';
 const INITIAL_CENTER=[28.669,77.453];
 const MAX_VISIBLE_FEATURES=1000;
+const COVER_COLORS={10:'#006400',20:'#ffbb22',30:'#ffff4c',40:'#f096ff',50:'#fa0000',60:'#b4b4b4',70:'#f0f0f0',80:'#0064c8',90:'#0096a0',95:'#00cf75',100:'#fae6a0'};
 function MapLayers({data,visible}){
  return data.filter(layer=>visible.includes(layer.id)).map(layer=>
    <GeoJSON key={layer.id} data={layer.data} style={()=>({color:'#227b58',weight:2,fillOpacity:0.25})}
@@ -128,7 +129,7 @@ export default function GISPage(){
       <h4>{coverStats.boundary_name} · {coverStats.scene_title}</h4>
       <p>Analysed area: {coverStats.analysed_area_ha.toLocaleString()} ha</p>
       <table><thead><tr><th>Class</th><th>Area (ha)</th><th>Share</th></tr></thead>
-       <tbody>{coverStats.categories.map(row=><tr key={row.code}><td>{row.name}</td><td>{row.area_ha.toLocaleString()}</td><td>{row.percentage}%</td></tr>)}</tbody></table>
+       <tbody>{coverStats.categories.map(row=><tr key={row.code}><td><span className="cover-swatch" style={{background:COVER_COLORS[row.code]||"#aaa"}} aria-hidden="true"/>{row.name}</td><td>{row.area_ha.toLocaleString()}</td><td>{row.percentage}%</td></tr>)}</tbody></table>
       <small>{coverStats.limitations}</small>
     </div>}
     <h3>Locally imported satellite scenes</h3>
