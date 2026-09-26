@@ -25,7 +25,16 @@ def inspect_workbook(path: Path, sample: int = 14):
                     continue
                 print(f"  ROW {line_no}: {cells[:24]}")
                 nonempty += 1
+                if any('GHAZIABAD' in str(v).upper() for v in row if v is not None):
+                    print(f'  TARGET GHAZIABAD ROW {line_no}: {cells[:40]}')
+                if nonempty >= sample and line_no > 100:
+                    break
                 if nonempty >= sample:
+                    # Still scan for Ghaziabad, without printing other district rows.
+                    for other_line, other in enumerate(sheet.iter_rows(min_row=line_no+1, values_only=True), start=line_no+1):
+                        if any('GHAZIABAD' in str(v).upper() for v in other if v is not None):
+                            match = [(i+1,str(v).strip()[:100]) for i,v in enumerate(other) if v is not None]
+                            print(f'  TARGET GHAZIABAD ROW {other_line}: {match[:40]}')
                     break
     finally:
         book.close()
