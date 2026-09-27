@@ -316,3 +316,44 @@ is available until you obtain suitable Sentinel-2 red/NIR scenes.
 
 To inspect future changes to the downloaded official spreadsheets:
 `python backend/scripts/inspect_dilrmp.py`.
+
+
+## Fast local SIH demonstration — no sign-in
+
+For the **local laptop demonstration only**, enable the explicit opt-in switch
+in your existing `backend/.env` file:
+
+```dotenv
+BHOOMIAI_LOCAL_DEMO=true
+```
+
+Then restart FastAPI from `backend/` with **loopback binding only**:
+
+```powershell
+python -m uvicorn app.main:app --reload --host 127.0.0.1
+```
+
+Keep Docker running. The frontend at `http://localhost:5173` now opens
+directly to the BhoomiAI workspace with no login, registration, session
+restoration, email, password, or setup key. The old frontend auth component
+has been removed. Existing accounts and database records are **not deleted**.
+
+In this mode, the backend selects your existing active administrator account
+so research-project foreign keys and audit entries still work. If this is a
+fresh local database, it creates an internal demo administrator with an
+unusable random password. The original authentication endpoints are disabled
+while demo mode is on. The local dataset importer can operate without asking
+for credentials:
+
+```powershell
+.\backend\.venv\Scripts\python.exe backend\scripts\import_ghaziabad.py
+```
+
+**Security:** demo mode deliberately skips password checks for all application
+modules and grants local administrator privileges. The API rejects connections
+whose peer is not a loopback IP, but a reverse proxy, remote tunnel or other
+software running on the same computer could still expose it to remote users.
+Do not use demo mode with `--host 0.0.0.0`, public tunnels, shared machines or
+production deployments. Do not expose either the Vite server or the FastAPI
+server to a network. For a secure multi-user deployment, set
+`BHOOMIAI_LOCAL_DEMO=false` and restore an authenticated frontend.

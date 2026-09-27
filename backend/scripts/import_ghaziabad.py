@@ -54,14 +54,20 @@ def main():
     if args.dry_run:
         return 0
 
-    email = input("BhoomiAI administrator email: ").strip()
-    password = getpass.getpass("BhoomiAI password (hidden): ")
     with httpx.Client(base_url=args.api.rstrip("/"), timeout=120.0) as client:
-        login = request(client, "POST", "/platform/auth/login",
-                        json={"email": email, "password": password})
-        if login["user"]["role"] != "admin":
-            raise RuntimeError("Only the administrator can run this local bootstrap import.")
-        client.headers["Authorization"] = "Bearer " + login["access_token"]
+        # Demo mode supplies an existing local administrator automatically.
+        # In the authenticated configuration, preserve the original login flow.
+        identity = client.get("/platform/auth/me")
+        if identity.status_code == 200 and identity.json().get("role") == "admin":
+            print("[OK] Connected to local demo without sign-in.")
+        else:
+            email = input("BhoomiAI administrator email: ").strip()
+            password = getpass.getpass("BhoomiAI password (hidden): ")
+            login = request(client, "POST", "/platform/auth/login",
+                            json={"email": email, "password": password})
+            if login["user"]["role"] != "admin":
+                raise RuntimeError("Administrator access required to import datasets.")
+            client.headers["Authorization"] = "Bearer " + login["access_token"]
 
         if BOUNDARY.is_file():
             layers = request(client, "GET", "/gis/layers")

@@ -1,8 +1,7 @@
 import React,{useEffect,useState} from 'react';
 import {createRoot} from 'react-dom/client';
 import './style.css';
-import {apiFetch,currentToken} from './api.js';
-import AuthGate from './AuthGate.jsx';
+import {apiFetch} from './api.js';
 import PlatformPage from './PlatformPage.jsx';
 import AdvancedPage from './AdvancedPage.jsx';
 import DilrmpPage from './DilrmpPage.jsx';
@@ -22,7 +21,6 @@ function App({user}){
    const job=await new Promise((resolve,reject)=>{
     const xhr=new XMLHttpRequest();
     xhr.open('POST',API+'/documents/jobs');
-    if(currentToken())xhr.setRequestHeader('Authorization','Bearer '+currentToken());
     xhr.upload.onprogress=event=>{
      if(event.lengthComputable){
       setProgress(Math.min(10,Math.round(event.loaded/event.total*10)));
@@ -68,4 +66,7 @@ function App({user}){
  <input aria-label="Filter district" placeholder="District filter" value={filter.district} onChange={e=>setFilter({...filter,district:e.target.value})}/>
  <button type="button" onClick={()=>reload()}>Apply filters</button></div>{uploading&&<div className="upload-progress" role="status" aria-live="polite"><div className="progress-label">{stage} · {progress}%</div><div className="progress-track"><div className="progress-fill" style={{width:progress+'%'}} /></div></div>}{docs.map(d=><div className="doc" key={d.id}><strong>{d.title||d.filename}</strong><small>{d.state&&d.state+' · '}{d.district&&d.district+' · '}{d.chunks} chunks</small>{d.source_url&&<a href={d.source_url} target="_blank" rel="noopener noreferrer">Original source</a>}<button type="button" className="delete" onClick={()=>removeDoc(d)}>Delete</button></div>)}{!docs.length&&<p>No documents yet. Upload the sample file.</p>}<footer>Free local model · Development only</footer></aside><main><nav className="main-nav"><button type="button" className={view==='research'?'active':''} onClick={()=>setView('research')}>AI Research</button><button type="button" className={view==='gis'?'active':''} onClick={()=>setView('gis')}>GIS Explorer</button><button type="button" className={view==='platform'?'active':''} onClick={()=>setView('platform')}>Research & Policy Hub</button><button type="button" className={view==='advanced'?'active':''} onClick={()=>setView('advanced')}>Data & Provenance</button><button type="button" className={view==='dilrmp'?'active':''} onClick={()=>setView('dilrmp')}>District Dashboard</button></nav>{view==='gis'?<GISPage/>:view==='platform'?<PlatformPage user={user}/>:view==='advanced'?<AdvancedPage user={user}/>:view==='dilrmp'?<DilrmpPage/>:<><header><div className="eyebrow">RESEARCH DISCOVERY</div><h2>Ask your land-governance documents</h2><p>Evidence-grounded answers with retrieved source passages.</p></header><section><form onSubmit={ask}><label htmlFor="question">Your research question</label><textarea id="question" rows={4} value={question} onChange={e=>setQuestion(e.target.value)} placeholder="What issues affect land-record modernization?"/><button disabled={busy||!question.trim()}>{busy?'Searching...':'Ask BhoomiAI'}</button></form>{notice&&<div className="notice">{notice}</div>}{answer&&<article><h3>Research answer</h3><div className="answer">{answer.answer}</div><h3>Sources ({answer.sources.length})</h3>{answer.sources.map(s=><div className="source" key={s.chunk_id}><strong>[{s.ref}] {s.title||s.filename}</strong> · {s.page?'Page '+s.page:'Text source'}{s.source_url&&<p><a href={s.source_url} target="_blank" rel="noopener noreferrer">Open original source</a></p>}<p>{s.excerpt}</p></div>)}</article>}<p className="hint">Stage 2: explore your own GeoJSON data on the GIS Explorer tab.</p></section></>}</main></div>
 }
-createRoot(document.getElementById('root')).render(<AuthGate><App/></AuthGate>);
+// Local SIH demonstration: no sign-in, accounts or session restoration screens.
+// Backend enforces the separate loopback-only BHOOMIAI_LOCAL_DEMO switch.
+const localDemoUser={id:0,name:'Local demo',role:'admin'};
+createRoot(document.getElementById('root')).render(<App user={localDemoUser}/>);

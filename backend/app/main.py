@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import hashlib
+import ipaddress
 import os
 import re
 import uuid
@@ -21,7 +22,9 @@ from sentence_transformers import SentenceTransformer
 from openpyxl import load_workbook
 import io
 from fastapi.responses import JSONResponse
-from .platform import router as platform_router, init_platform_database, authenticate_token, require_admin, audit
+from .platform import (router as platform_router, init_platform_database, authenticate_token,
+                       require_admin, audit, LOCAL_DEMO_MODE, local_demo_user,
+                       ensure_local_demo_admin)
 from .raster import router as raster_router, init_raster_database
 from .gis import router as gis_router, init_geo_database
 from .advanced import router as advanced_router
@@ -108,6 +111,7 @@ def init_database():
 async def lifespan(app: FastAPI):
     init_database()
     init_platform_database()
+    ensure_local_demo_admin()
     init_geo_database()
     init_raster_database()
     yield
@@ -127,6 +131,24 @@ async def require_session(request, call_next):
             "/platform/auth/bootstrap","/platform/auth/login"}
     protected=path.startswith(("/documents","/search","/chat","/gis",
                                 "/raster","/platform","/advanced","/dilrmp"))
+    # Explicit opt-in for a single-user, local-only SIH demonstration.
+    # Never use with a public network binding or a reverse proxy.
+    if LOCAL_DEMO_MODE:
+        remote = request.client.host if request.client else ""
+        try:
+            on_loopback = ipaddress.ip_address(remote).is_loopback
+        except ValueError:
+            on_loopback = False
+        if not on_loopback:
+            return JSONResponse(
+                status_code=403,
+                content={"detail": "Local demo API accepts loopback connections only."},
+            )
+        if path.startswith("/platform/auth/") and path != "/platform/auth/me":
+            return JSONResponse(status_code=404, content={"detail": "Sign-in is disabled in local demo mode."})
+        if protected:
+            request.state.user = local_demo_user()
+        return await call_next(request)
     if request.method=="OPTIONS" or path in public or not protected:
         return await call_next(request)
     auth=request.headers.get("Authorization","")
