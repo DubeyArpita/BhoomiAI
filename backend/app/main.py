@@ -12,6 +12,7 @@ from pathlib import Path
 import fitz
 import httpx
 import psycopg
+from psycopg import sql
 from dotenv import load_dotenv
 from fastapi import BackgroundTasks, Depends, FastAPI, File, Form, HTTPException, Query, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
@@ -28,6 +29,7 @@ from .dilrmp import router as dilrmp_router
 
 load_dotenv()
 DB_URL = os.getenv("DATABASE_URL", "postgresql://bhoomi:bhoomi_dev_only@localhost:5433/bhoomiai")
+GEO_DB_URL = os.getenv("GEO_DATABASE_URL", "postgresql://bhoomi_geo:bhoomi_geo_dev_only@localhost:5434/bhoomi_geo")
 EMBEDDING_MODEL = os.getenv("EMBEDDING_MODEL", "sentence-transformers/all-MiniLM-L6-v2")
 OLLAMA_URL = os.getenv("OLLAMA_URL", "http://localhost:11434").rstrip("/")
 OLLAMA_MODEL = os.getenv("OLLAMA_MODEL", "gemma3:4b")
@@ -141,7 +143,11 @@ def extract_pages(filename, content):
         try:
             pdf = fitz.open(stream=content, filetype="pdf")
             try:
-                return [(idx + 1, page.get_text(sort=True)) for idx, page in enumerate(pdf)]
+                pages = []
+                for idx in range(len(pdf)):
+                    page = pdf[idx]
+                    pages.append((idx + 1, page.get_text(sort=True)))
+                return pages
             finally:
                 pdf.close()
         except Exception as exc:
@@ -211,16 +217,42 @@ async def upload_document(file: UploadFile = File(...)):
         raise HTTPException(422, "No extractable text; scanned PDFs are not supported yet")
     embeddings = model().encode([chunk for _, chunk in pieces], normalize_embeddings=True,
                                 show_progress_bar=False)
+    
     with conn() as db:
-        doc_id = db.execute(
-            "INSERT INTO documents (filename,sha256,chunk_count) VALUES (%s,%s,%s) RETURNING id",
-            (filename, digest, len(pieces))).fetchone()[0]
+        cursor = db.execute(
+            """
+            INSERT INTO documents (filename, sha256, chunk_count)
+            VALUES (%s, %s, %s)
+            RETURNING id
+            """,
+            (filename, digest, len(pieces)),
+        )
+
+        row = cursor.fetchone()
+        if row is None:
+            raise RuntimeError("Document insertion returned no ID")
+
+        doc_id = row[0]
+
         with db.cursor() as cur:
             cur.executemany(
-                "INSERT INTO chunks (document_id,page_number,content,embedding) VALUES (%s,%s,%s,%s::vector)",
-                [(doc_id, page, chunk, vector_literal(emb))
-                 for (page, chunk), emb in zip(pieces, embeddings)])
-    return {"id": doc_id, "filename": filename, "chunks": len(pieces)}
+                """
+                INSERT INTO chunks
+                    (document_id, page_number, content, embedding)
+                VALUES (%s, %s, %s, %s::vector)
+                """,
+                [
+                    (doc_id, page, chunk, vector_literal(emb))
+                    for (page, chunk), emb in zip(pieces, embeddings)
+                ],
+            )
+
+    return {
+        "id": doc_id,
+        "filename": filename,
+        "chunks": len(pieces),
+    }
+
 
 
 def update_job(job_id, status, stage, progress, document_id=None, error=None):
@@ -253,9 +285,22 @@ def index_in_background(job_id, filename, data, digest, metadata):
             update_job(job_id, "processing", "Generating embeddings", percentage)
         update_job(job_id, "processing", "Saving document and search index", 90)
         with conn() as db:
-            doc_id = db.execute(
-                "INSERT INTO documents (filename,sha256,chunk_count) VALUES (%s,%s,%s) RETURNING id",
-                (filename, digest, len(pieces))).fetchone()[0]
+            
+            cursor = db.execute(
+                """
+                INSERT INTO documents (filename, sha256, chunk_count)
+                VALUES (%s, %s, %s)
+                RETURNING id
+                """,
+                (filename, digest, len(pieces)),
+            )
+
+            row = cursor.fetchone()
+            if row is None:
+                raise RuntimeError("Document insertion returned no ID")
+
+            doc_id = row[0]
+
             db.execute("UPDATE documents SET title=%s,state=%s,district=%s,source_url=%s WHERE id=%s", (*metadata, doc_id))
             with db.cursor() as cur:
                 cur.executemany(
@@ -379,9 +424,12 @@ def correct_document_metadata(
     with conn() as db:
         if not db.execute("SELECT 1 FROM documents WHERE id=%s", (document_id,)).fetchone():
             raise HTTPException(404, "Document not found.")
-        assignments = ", ".join(name + "=%s" for name in names)
+        set_clause = sql.SQL(", ").join(
+            sql.SQL("{field} = %s").format(field=sql.Identifier(name)) for name in names
+        )
+        query = sql.SQL("UPDATE documents SET {fields} WHERE id = %s").format(fields=set_clause)
         db.execute(
-            "UPDATE documents SET " + assignments + " WHERE id=%s",
+            query,
             [supplied[name].strip() for name in names] + [document_id],
         )
         audit(db, user["id"], "correct_document_metadata", document_id)
