@@ -54,7 +54,9 @@ def model() -> SentenceTransformer:
     return _model
 
 
-def vector_literal(values: Iterable[float]) -> str:
+def vector_literal(values: Any) -> str:
+    if hasattr(values, "tolist"):
+        values = values.tolist()
     return "[" + ",".join(str(float(v)) for v in values) + "]"
 
 
@@ -270,9 +272,7 @@ async def upload_document(file: UploadFile = File(...)):
                                 show_progress_bar=False)
     
     with conn() as db:
-        doc_id = db.execute(
-            "INSERT INTO documents (filename,sha256,chunk_count) VALUES (%s,%s,%s) RETURNING id",
-            (filename, digest, len(pieces))).fetchone()[0]
+        doc_id = insert_document(db, filename, digest, len(pieces))
         with db.cursor() as cur:
             cur.executemany(
                 """
@@ -324,10 +324,7 @@ def index_in_background(job_id, filename, data, digest, metadata):
             update_job(job_id, "processing", "Generating embeddings", percentage)
         update_job(job_id, "processing", "Saving document and search index", 90)
         with conn() as db:
-            doc_id = db.execute(
-                "INSERT INTO documents (filename,sha256,chunk_count) VALUES (%s,%s,%s) RETURNING id",
-                (filename, digest, len(pieces))).fetchone()[0]
-            db.execute("UPDATE documents SET title=%s,state=%s,district=%s,source_url=%s WHERE id=%s", (*metadata, doc_id))
+            doc_id = insert_document(db, filename, digest, len(pieces), metadata)
             with db.cursor() as cur:
                 cur.executemany(
                     "INSERT INTO chunks (document_id,page_number,content,embedding) "
