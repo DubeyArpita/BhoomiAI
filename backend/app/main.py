@@ -2,12 +2,14 @@
 from __future__ import annotations
 
 import hashlib
+import ipaddress
 import os
 import re
 import uuid
 import logging
 from contextlib import asynccontextmanager
 from pathlib import Path
+from typing import Any, Iterable
 
 import fitz
 import httpx
@@ -21,7 +23,9 @@ from sentence_transformers import SentenceTransformer
 from openpyxl import load_workbook
 import io
 from fastapi.responses import JSONResponse
-from .platform import router as platform_router, init_platform_database, authenticate_token, require_admin, audit
+from .platform import (router as platform_router, init_platform_database, authenticate_token,
+                       require_admin, audit, LOCAL_DEMO_MODE, local_demo_user,
+                       ensure_local_demo_admin)
 from .raster import router as raster_router, init_raster_database
 from .gis import router as gis_router, init_geo_database
 from .advanced import router as advanced_router
@@ -35,23 +39,48 @@ OLLAMA_URL = os.getenv("OLLAMA_URL", "http://localhost:11434").rstrip("/")
 OLLAMA_MODEL = os.getenv("OLLAMA_MODEL", "gemma3:4b")
 FRONTEND_ORIGIN = os.getenv("FRONTEND_ORIGIN", "http://localhost:5173")
 MAX_UPLOAD_BYTES = 15 * 1024 * 1024
-_model = None
+_model: SentenceTransformer | None = None
 logger = logging.getLogger(__name__)
 
 
-def conn():
+def conn() -> psycopg.Connection[Any]:
     return psycopg.connect(DB_URL)
 
 
-def model():
+def model() -> SentenceTransformer:
     global _model
     if _model is None:
         _model = SentenceTransformer(EMBEDDING_MODEL)
     return _model
 
 
-def vector_literal(values):
+def vector_literal(values: Iterable[float]) -> str:
     return "[" + ",".join(str(float(v)) for v in values) + "]"
+
+
+def insert_document(db: psycopg.Connection[Any], filename: str, digest: str,
+                    chunk_count: int, metadata: tuple[str, str, str, str] | None = None) -> int:
+    """Insert a document and return its ID, with a checked RETURNING result.
+
+    Raise a clear exception if the database returns no row; never index None.
+    Caller owns the transaction so document metadata and embeddings remain atomic.
+    """
+    cursor = db.execute(
+        "INSERT INTO documents (filename, sha256, chunk_count) "
+        "VALUES (%s, %s, %s) RETURNING id",
+        (filename, digest, chunk_count),
+    )
+    row = cursor.fetchone()
+    if row is None:
+        raise RuntimeError("Database did not return an ID for the inserted document.")
+    document_id = int(row[0])
+    if metadata is not None:
+        db.execute(
+            "UPDATE documents SET title=%s, state=%s, district=%s, source_url=%s "
+            "WHERE id=%s",
+            (*metadata, document_id),
+        )
+    return document_id
 
 
 def init_database():
@@ -84,6 +113,7 @@ def init_database():
 async def lifespan(app: FastAPI):
     init_database()
     init_platform_database()
+    ensure_local_demo_admin()
     init_geo_database()
     init_raster_database()
     yield
@@ -103,6 +133,24 @@ async def require_session(request, call_next):
             "/platform/auth/bootstrap","/platform/auth/login"}
     protected=path.startswith(("/documents","/search","/chat","/gis",
                                 "/raster","/platform","/advanced","/dilrmp"))
+    # Explicit opt-in for a single-user, local-only SIH demonstration.
+    # Never use with a public network binding or a reverse proxy.
+    if LOCAL_DEMO_MODE:
+        remote = request.client.host if request.client else ""
+        try:
+            on_loopback = ipaddress.ip_address(remote).is_loopback
+        except ValueError:
+            on_loopback = False
+        if not on_loopback:
+            return JSONResponse(
+                status_code=403,
+                content={"detail": "Local demo API accepts loopback connections only."},
+            )
+        if path.startswith("/platform/auth/") and path != "/platform/auth/me":
+            return JSONResponse(status_code=404, content={"detail": "Sign-in is disabled in local demo mode."})
+        if protected:
+            request.state.user = local_demo_user()
+        return await call_next(request)
     if request.method=="OPTIONS" or path in public or not protected:
         return await call_next(request)
     auth=request.headers.get("Authorization","")
@@ -163,15 +211,18 @@ def extract_pages(filename, content):
                 for sheet in book:
                     lines = [f"Workbook: {Path(filename).name}; worksheet: {sheet.title}"]
                     count = 0
+                    character_count = len(lines[0])
                     for row in sheet.iter_rows(values_only=True):
                         cells = [str(value).replace("\n", " ").strip() if value is not None else ""
                                  for value in row[:60]]
                         if any(cells):
-                            lines.append(" | ".join(cells).rstrip(" |"))
+                            line = " | ".join(cells).rstrip(" |")
+                            lines.append(line)
+                            character_count += len(line) + 1
                             count += 1
                         # Refuse excessive sheets instead of indexing truncated
                         # government reports without the user knowing.
-                        if count > 10000 or sum(map(len, lines)) > 2_000_000:
+                        if count > 10000 or character_count > 2_000_000:
                             raise HTTPException(413, "Workbook is too large to index safely.")
                     pages.append((None, "\n".join(lines)))
                 return pages
@@ -210,7 +261,7 @@ async def upload_document(file: UploadFile = File(...)):
     digest = hashlib.sha256(data).hexdigest()
     with conn() as db:
         prior = db.execute("SELECT id FROM documents WHERE sha256=%s", (digest,)).fetchone()
-    if prior:
+    if prior is not None:
         raise HTTPException(409, f"This file is already indexed (document {prior[0]})")
     pieces = [(page, chunk) for page, text in extract_pages(filename, data) for chunk in split_text(text)]
     if not pieces:
@@ -219,21 +270,9 @@ async def upload_document(file: UploadFile = File(...)):
                                 show_progress_bar=False)
     
     with conn() as db:
-        cursor = db.execute(
-            """
-            INSERT INTO documents (filename, sha256, chunk_count)
-            VALUES (%s, %s, %s)
-            RETURNING id
-            """,
-            (filename, digest, len(pieces)),
-        )
-
-        row = cursor.fetchone()
-        if row is None:
-            raise RuntimeError("Document insertion returned no ID")
-
-        doc_id = row[0]
-
+        doc_id = db.execute(
+            "INSERT INTO documents (filename,sha256,chunk_count) VALUES (%s,%s,%s) RETURNING id",
+            (filename, digest, len(pieces))).fetchone()[0]
         with db.cursor() as cur:
             cur.executemany(
                 """
@@ -285,22 +324,9 @@ def index_in_background(job_id, filename, data, digest, metadata):
             update_job(job_id, "processing", "Generating embeddings", percentage)
         update_job(job_id, "processing", "Saving document and search index", 90)
         with conn() as db:
-            
-            cursor = db.execute(
-                """
-                INSERT INTO documents (filename, sha256, chunk_count)
-                VALUES (%s, %s, %s)
-                RETURNING id
-                """,
-                (filename, digest, len(pieces)),
-            )
-
-            row = cursor.fetchone()
-            if row is None:
-                raise RuntimeError("Document insertion returned no ID")
-
-            doc_id = row[0]
-
+            doc_id = db.execute(
+                "INSERT INTO documents (filename,sha256,chunk_count) VALUES (%s,%s,%s) RETURNING id",
+                (filename, digest, len(pieces))).fetchone()[0]
             db.execute("UPDATE documents SET title=%s,state=%s,district=%s,source_url=%s WHERE id=%s", (*metadata, doc_id))
             with db.cursor() as cur:
                 cur.executemany(
@@ -311,7 +337,10 @@ def index_in_background(job_id, filename, data, digest, metadata):
         update_job(job_id, "completed", "Ready to search", 100, document_id=doc_id)
     except Exception as exc:
         logger.exception("Document indexing failed for job %s", job_id)
-        update_job(job_id, "failed", "Indexing failed", 0, error=str(exc)[:500])
+        try:
+            update_job(job_id, "failed", "Indexing failed", 0, error=str(exc)[:500])
+        except Exception:
+            logger.exception("Could not record failure for upload job %s", job_id)
 
 
 @app.post("/documents/jobs", status_code=202)
@@ -334,12 +363,12 @@ async def create_upload_job(
     metadata = (title.strip() or filename, state.strip(), district.strip(), source_url.strip())
     with conn() as db:
         existing = db.execute("SELECT id FROM documents WHERE sha256=%s", (digest,)).fetchone()
-        if existing:
+        if existing is not None:
             raise HTTPException(409, f"Already indexed (document {existing[0]})")
         active = db.execute(
             "SELECT id FROM upload_jobs WHERE filename=%s AND status IN ('queued','processing')",
             (filename,)).fetchone()
-        if active:
+        if active is not None:
             raise HTTPException(409, f"File is already processing (job {active[0]})")
         job_id = uuid.uuid4()
         db.execute(
@@ -357,7 +386,7 @@ def get_upload_job(job_id: uuid.UUID):
         row = db.execute(
             "SELECT filename,status,stage,progress,document_id,error "
             "FROM upload_jobs WHERE id=%s", (job_id,)).fetchone()
-    if not row:
+    if row is None:
         raise HTTPException(404, "Upload job not found")
     return {"job_id": str(job_id), "filename": row[0], "status": row[1],
             "stage": row[2], "progress": row[3],
@@ -393,7 +422,7 @@ def delete_document(document_id: int):
                    (document_id,))
         deleted = db.execute("DELETE FROM documents WHERE id=%s RETURNING filename",
                              (document_id,)).fetchone()
-    if not deleted:
+    if deleted is None:
         raise HTTPException(404, "Document not found")
     return {"deleted": document_id, "filename": deleted[0]}
 

@@ -30,6 +30,7 @@ router = APIRouter(prefix="/platform", tags=["Research Platform"])
 DB_URL = os.getenv("DATABASE_URL", "postgresql://bhoomi:bhoomi_dev_only@localhost:5433/bhoomiai")
 SESSION_SECRET = os.getenv("SESSION_SECRET", "")
 BOOTSTRAP_KEY = os.getenv("BOOTSTRAP_KEY", "")
+LOCAL_DEMO_MODE = os.getenv("BHOOMIAI_LOCAL_DEMO", "").strip().lower() in ("1", "true", "yes")
 
 
 def conn():
@@ -79,6 +80,46 @@ def init_platform_database():
             id BIGSERIAL PRIMARY KEY, actor_id BIGINT REFERENCES platform_users(id),
             event TEXT NOT NULL, target TEXT NOT NULL, created_at
             TIMESTAMPTZ DEFAULT NOW())""")
+
+
+
+def ensure_local_demo_admin():
+    """Use an existing active admin, or create one with a random unknown password.
+
+    Demo mode is permitted only for a backend deliberately bound to loopback.
+    We keep a real user row so project foreign keys and audit records work.
+    """
+    if not LOCAL_DEMO_MODE:
+        return
+    with conn() as db:
+        db.execute("SELECT pg_advisory_xact_lock(725002)")
+        existing = db.execute(
+            "SELECT id FROM platform_users WHERE role='admin' AND active=TRUE "
+            "ORDER BY id LIMIT 1"
+        ).fetchone()
+        if existing:
+            return
+        db.execute(
+            "INSERT INTO platform_users(name,email,password_hash,role) "
+            "VALUES (%s,%s,%s,'admin') ON CONFLICT (email) DO UPDATE "
+            "SET role='admin',active=TRUE",
+            ("Local Demo", "local-demo@bhoomiai.invalid",
+             password_hash(secrets.token_urlsafe(48))),
+        )
+
+
+def local_demo_user():
+    """Return a persisted admin identity for loopback-only local demonstrations."""
+    if not LOCAL_DEMO_MODE:
+        raise HTTPException(403, "Local demo is disabled.")
+    with conn() as db:
+        row = db.execute(
+            "SELECT id,name,email,role FROM platform_users "
+            "WHERE role='admin' AND active=TRUE ORDER BY id LIMIT 1"
+        ).fetchone()
+    if row is None:
+        raise HTTPException(503, "Local demo administrator is missing; restart the backend.")
+    return {"id":row[0],"name":row[1],"email":row[2],"role":row[3]}
 
 
 def password_hash(password):
