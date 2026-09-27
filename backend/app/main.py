@@ -8,6 +8,7 @@ import uuid
 import logging
 from contextlib import asynccontextmanager
 from pathlib import Path
+from typing import Any, Iterable
 
 import fitz
 import httpx
@@ -33,23 +34,48 @@ OLLAMA_URL = os.getenv("OLLAMA_URL", "http://localhost:11434").rstrip("/")
 OLLAMA_MODEL = os.getenv("OLLAMA_MODEL", "gemma3:4b")
 FRONTEND_ORIGIN = os.getenv("FRONTEND_ORIGIN", "http://localhost:5173")
 MAX_UPLOAD_BYTES = 15 * 1024 * 1024
-_model = None
+_model: SentenceTransformer | None = None
 logger = logging.getLogger(__name__)
 
 
-def conn():
+def conn() -> psycopg.Connection[Any]:
     return psycopg.connect(DB_URL)
 
 
-def model():
+def model() -> SentenceTransformer:
     global _model
     if _model is None:
         _model = SentenceTransformer(EMBEDDING_MODEL)
     return _model
 
 
-def vector_literal(values):
+def vector_literal(values: Iterable[float]) -> str:
     return "[" + ",".join(str(float(v)) for v in values) + "]"
+
+
+def insert_document(db: psycopg.Connection[Any], filename: str, digest: str,
+                    chunk_count: int, metadata: tuple[str, str, str, str] | None = None) -> int:
+    """Insert a document and return its ID, with a checked RETURNING result.
+
+    Raise a clear exception if the database returns no row; never index None.
+    Caller owns the transaction so document metadata and embeddings remain atomic.
+    """
+    cursor = db.execute(
+        "INSERT INTO documents (filename, sha256, chunk_count) "
+        "VALUES (%s, %s, %s) RETURNING id",
+        (filename, digest, chunk_count),
+    )
+    row = cursor.fetchone()
+    if row is None:
+        raise RuntimeError("Database did not return an ID for the inserted document.")
+    document_id = int(row[0])
+    if metadata is not None:
+        db.execute(
+            "UPDATE documents SET title=%s, state=%s, district=%s, source_url=%s "
+            "WHERE id=%s",
+            (*metadata, document_id),
+        )
+    return document_id
 
 
 def init_database():
@@ -157,15 +183,18 @@ def extract_pages(filename, content):
                 for sheet in book:
                     lines = [f"Workbook: {Path(filename).name}; worksheet: {sheet.title}"]
                     count = 0
+                    character_count = len(lines[0])
                     for row in sheet.iter_rows(values_only=True):
                         cells = [str(value).replace("\n", " ").strip() if value is not None else ""
                                  for value in row[:60]]
                         if any(cells):
-                            lines.append(" | ".join(cells).rstrip(" |"))
+                            line = " | ".join(cells).rstrip(" |")
+                            lines.append(line)
+                            character_count += len(line) + 1
                             count += 1
                         # Refuse excessive sheets instead of indexing truncated
                         # government reports without the user knowing.
-                        if count > 10000 or sum(map(len, lines)) > 2_000_000:
+                        if count > 10000 or character_count > 2_000_000:
                             raise HTTPException(413, "Workbook is too large to index safely.")
                     pages.append((None, "\n".join(lines)))
                 return pages
@@ -204,7 +233,7 @@ async def upload_document(file: UploadFile = File(...)):
     digest = hashlib.sha256(data).hexdigest()
     with conn() as db:
         prior = db.execute("SELECT id FROM documents WHERE sha256=%s", (digest,)).fetchone()
-    if prior:
+    if prior is not None:
         raise HTTPException(409, f"This file is already indexed (document {prior[0]})")
     pieces = [(page, chunk) for page, text in extract_pages(filename, data) for chunk in split_text(text)]
     if not pieces:
@@ -212,9 +241,7 @@ async def upload_document(file: UploadFile = File(...)):
     embeddings = model().encode([chunk for _, chunk in pieces], normalize_embeddings=True,
                                 show_progress_bar=False)
     with conn() as db:
-        doc_id = db.execute(
-            "INSERT INTO documents (filename,sha256,chunk_count) VALUES (%s,%s,%s) RETURNING id",
-            (filename, digest, len(pieces))).fetchone()[0]
+        doc_id = insert_document(db, filename, digest, len(pieces))
         with db.cursor() as cur:
             cur.executemany(
                 "INSERT INTO chunks (document_id,page_number,content,embedding) VALUES (%s,%s,%s,%s::vector)",
@@ -253,10 +280,7 @@ def index_in_background(job_id, filename, data, digest, metadata):
             update_job(job_id, "processing", "Generating embeddings", percentage)
         update_job(job_id, "processing", "Saving document and search index", 90)
         with conn() as db:
-            doc_id = db.execute(
-                "INSERT INTO documents (filename,sha256,chunk_count) VALUES (%s,%s,%s) RETURNING id",
-                (filename, digest, len(pieces))).fetchone()[0]
-            db.execute("UPDATE documents SET title=%s,state=%s,district=%s,source_url=%s WHERE id=%s", (*metadata, doc_id))
+            doc_id = insert_document(db, filename, digest, len(pieces), metadata)
             with db.cursor() as cur:
                 cur.executemany(
                     "INSERT INTO chunks (document_id,page_number,content,embedding) "
@@ -266,7 +290,10 @@ def index_in_background(job_id, filename, data, digest, metadata):
         update_job(job_id, "completed", "Ready to search", 100, document_id=doc_id)
     except Exception as exc:
         logger.exception("Document indexing failed for job %s", job_id)
-        update_job(job_id, "failed", "Indexing failed", 0, error=str(exc)[:500])
+        try:
+            update_job(job_id, "failed", "Indexing failed", 0, error=str(exc)[:500])
+        except Exception:
+            logger.exception("Could not record failure for upload job %s", job_id)
 
 
 @app.post("/documents/jobs", status_code=202)
@@ -289,12 +316,12 @@ async def create_upload_job(
     metadata = (title.strip() or filename, state.strip(), district.strip(), source_url.strip())
     with conn() as db:
         existing = db.execute("SELECT id FROM documents WHERE sha256=%s", (digest,)).fetchone()
-        if existing:
+        if existing is not None:
             raise HTTPException(409, f"Already indexed (document {existing[0]})")
         active = db.execute(
             "SELECT id FROM upload_jobs WHERE filename=%s AND status IN ('queued','processing')",
             (filename,)).fetchone()
-        if active:
+        if active is not None:
             raise HTTPException(409, f"File is already processing (job {active[0]})")
         job_id = uuid.uuid4()
         db.execute(
@@ -312,7 +339,7 @@ def get_upload_job(job_id: uuid.UUID):
         row = db.execute(
             "SELECT filename,status,stage,progress,document_id,error "
             "FROM upload_jobs WHERE id=%s", (job_id,)).fetchone()
-    if not row:
+    if row is None:
         raise HTTPException(404, "Upload job not found")
     return {"job_id": str(job_id), "filename": row[0], "status": row[1],
             "stage": row[2], "progress": row[3],
@@ -348,7 +375,7 @@ def delete_document(document_id: int):
                    (document_id,))
         deleted = db.execute("DELETE FROM documents WHERE id=%s RETURNING filename",
                              (document_id,)).fetchone()
-    if not deleted:
+    if deleted is None:
         raise HTTPException(404, "Document not found")
     return {"deleted": document_id, "filename": deleted[0]}
 
