@@ -1,0 +1,11 @@
+fastapi>=0.115,<1
+uvicorn[standard]>=0.30,<1
+pymupdf>=1.24,<2
+openpyxl>=3.1,<4
+rasterio>=1.4,<2
+Pillow>=10,<13
+numpy>=1.26,<3
+psycopg[binary]>=3.2,<4
+httpx>=0.27,<1
+itsdangerous>=2.2,<3
+python-dotenv>=1.0,<2

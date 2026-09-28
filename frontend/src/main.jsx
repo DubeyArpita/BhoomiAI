@@ -1,12 +1,11 @@
 import React,{useEffect,useState} from 'react';
 import {createRoot} from 'react-dom/client';
 import './style.css';
-import {apiFetch} from './api.js';
+import {API,apiFetch} from './api.js';
 import PlatformPage from './PlatformPage.jsx';
 import AdvancedPage from './AdvancedPage.jsx';
 import DilrmpPage from './DilrmpPage.jsx';
 import GISPage from './GISPage.jsx';
-const API='/api';
 function App({user}){
  const [view,setView]=useState('research');
  const [meta,setMeta]=useState({title:'',state:'',district:'',source_url:''}),[filter,setFilter]=useState({q:'',state:'',district:''}),[docs,setDocs]=useState([]),[question,setQuestion]=useState(''),[answer,setAnswer]=useState(null),[busy,setBusy]=useState(false),[uploading,setUploading]=useState(false),[notice,setNotice]=useState(''),[progress,setProgress]=useState(0),[stage,setStage]=useState('');
