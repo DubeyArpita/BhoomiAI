@@ -150,6 +150,11 @@ async def require_session(request, call_next):
             )
         if path.startswith("/platform/auth/") and path != "/platform/auth/me":
             return JSONResponse(status_code=404, content={"detail": "Sign-in is disabled in local demo mode."})
+        # GIS and raster routes do not use a user identity. In local demo mode,
+        # do not query the main PostgreSQL database just to authorize them.
+        # This keeps the map demo responsive even while document/RAG work is busy.
+        if path.startswith(("/gis", "/raster")):
+            return await call_next(request)
         if protected:
             request.state.user = local_demo_user()
         return await call_next(request)

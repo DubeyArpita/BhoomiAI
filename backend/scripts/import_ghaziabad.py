@@ -55,19 +55,30 @@ def main():
         return 0
 
     with httpx.Client(base_url=args.api.rstrip("/"), timeout=120.0) as client:
-        # Demo mode supplies an existing local administrator automatically.
-        # In the authenticated configuration, preserve the original login flow.
-        identity = client.get("/platform/auth/me")
-        if identity.status_code == 200 and identity.json().get("role") == "admin":
-            print("[OK] Connected to local demo without sign-in.")
-        else:
-            email = input("BhoomiAI administrator email: ").strip()
-            password = getpass.getpass("BhoomiAI password (hidden): ")
-            login = request(client, "POST", "/platform/auth/login",
-                            json={"email": email, "password": password})
-            if login["user"]["role"] != "admin":
-                raise RuntimeError("Administrator access required to import datasets.")
-            client.headers["Authorization"] = "Bearer " + login["access_token"]
+        # Spatial-only demo import should not depend on the main application
+        # database or authentication path. Local demo mode exposes /gis and
+        # /raster only to loopback, so test those routes directly first.
+        spatial_ready = False
+        if args.skip_reports:
+            probe = client.get("/gis/layers")
+            if probe.status_code == 200:
+                spatial_ready = True
+                print("[OK] Connected to local GIS/raster demo without sign-in.")
+
+        if not spatial_ready:
+            # Full import still needs a persisted administrator because
+            # document ingestion and metadata correction are audited.
+            identity = client.get("/platform/auth/me")
+            if identity.status_code == 200 and identity.json().get("role") == "admin":
+                print("[OK] Connected to local demo without sign-in.")
+            else:
+                email = input("BhoomiAI administrator email: ").strip()
+                password = getpass.getpass("BhoomiAI password (hidden): ")
+                login = request(client, "POST", "/platform/auth/login",
+                                json={"email": email, "password": password})
+                if login["user"]["role"] != "admin":
+                    raise RuntimeError("Administrator access required to import datasets.")
+                client.headers["Authorization"] = "Bearer " + login["access_token"]
 
         if BOUNDARY.is_file():
             layers = request(client, "GET", "/gis/layers")
