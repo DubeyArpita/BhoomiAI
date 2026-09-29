@@ -39,8 +39,13 @@ export default function PlatformPage({user}){
   const outcomes=await Promise.allSettled(endpoints.map(async([path,update])=>update(await request(path))));
   const errors=outcomes.filter(x=>x.status==='rejected');
   if(errors.length)setError('Some panels could not load: '+errors.map(e=>e.reason.message).join('; '));
-  if(admin){try{setUsers(await request('/platform/users'))}catch(e){setError(e.message)}}
+  // Do not block the whole hub on the optional admin user directory.
+  // The local SIH demo does not need user management to render Overview,
+  // Workspaces, Policy Lab, Satellite Lab or Evidence Graph.
   setLoading(false);
+  if(admin){
+   request('/platform/users').then(setUsers).catch(e=>setError(e.message));
+  }
  }
  useEffect(()=>{load()},[]);
  useEffect(()=>{if(chosen)request('/platform/projects/'+chosen+'/notes').then(setNotes).catch(e=>setError(e.message));else setNotes([])},[chosen]);
